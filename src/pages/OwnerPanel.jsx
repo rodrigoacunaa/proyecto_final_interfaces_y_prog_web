@@ -14,213 +14,195 @@ function OwnerPanel() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [activeTab, setActiveTab] = useState("canchas");
-  const [form, setForm] = useState({
-    name: "",
-    sport: "futbol",
-    price: "",
-    location: "",
-  });
+  const [form, setForm] = useState({ name: "", sport: "futbol", price: "", location: "" });
 
   const fetchMyCourts = async () => {
     const q = query(collection(db, "courts"), where("ownerId", "==", user.uid));
     const snapshot = await getDocs(q);
-    const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    setCourts(data);
+    setCourts(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
   };
 
   const fetchReservations = async () => {
-    const pending = query(
-      collection(db, "reservations"),
-      where("ownerId", "==", user.uid),
-      where("status", "==", "pending")
-    );
-    const confirmed = query(
-      collection(db, "reservations"),
-      where("ownerId", "==", user.uid),
-      where("status", "==", "confirmed")
-    );
-
     const [pendingSnap, confirmedSnap] = await Promise.all([
-      getDocs(pending),
-      getDocs(confirmed),
+      getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "pending"))),
+      getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "confirmed"))),
     ]);
-
     setPendingReservations(pendingSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     setConfirmedReservations(confirmedSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     setLoading(false);
   };
 
-  useEffect(() => {
-    fetchMyCourts();
-    fetchReservations();
-  }, []);
+  useEffect(() => { fetchMyCourts(); fetchReservations(); }, []);
 
-  const handleConfirm = async (reservationId) => {
-    await updateDoc(doc(db, "reservations", reservationId), {
-      status: "confirmed",
-    });
+  const handleConfirm = async (id) => {
+    await updateDoc(doc(db, "reservations", id), { status: "confirmed" });
     fetchReservations();
   };
 
-  const handleReject = async (reservationId) => {
-    await updateDoc(doc(db, "reservations", reservationId), {
-      status: "cancelled",
-    });
+  const handleReject = async (id) => {
+    await updateDoc(doc(db, "reservations", id), { status: "cancelled" });
     fetchReservations();
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    await addDoc(collection(db, "courts"), {
-      ...form,
-      price: Number(form.price),
-      available: true,
-      ownerId: user.uid,
-    });
+    await addDoc(collection(db, "courts"), { ...form, price: Number(form.price), available: true, ownerId: user.uid });
     setForm({ name: "", sport: "futbol", price: "", location: "" });
     setShowForm(false);
     fetchMyCourts();
   };
 
-  const handleLogout = async () => {
-    await signOut(auth);
-    navigate("/login");
-  };
+  const getCourtName = (courtId) => courts.find((c) => c.id === courtId)?.name || "Cancha";
 
-  const getCourtName = (courtId) => {
-    const court = courts.find((c) => c.id === courtId);
-    return court ? court.name : courtId;
-  };
+  const sportEmoji = (sport) => ({ futbol: "⚽", padel: "🎾", tenis: "🎾", basquet: "🏀" }[sport] || "🏅");
 
-  if (loading) return <p>Cargando...</p>;
+  if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Cargando...</div>;
 
-  const tabStyle = (tab) => ({
-    padding: "0.5rem 1.5rem",
-    cursor: "pointer",
-    borderBottom: activeTab === tab ? "2px solid white" : "2px solid transparent",
-    background: "none",
-    color: "white",
-    fontSize: "1rem",
-  });
+  const tabs = [
+    { id: "canchas", label: "Mis canchas" },
+    { id: "pendientes", label: `Pendientes${pendingReservations.length > 0 ? ` (${pendingReservations.length})` : ""}` },
+    { id: "confirmadas", label: "Confirmadas" },
+  ];
 
   return (
-    <div style={{ maxWidth: "800px", margin: "0 auto", padding: "2rem" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h1>🏟️ Mi panel</h1>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          <button onClick={() => navigate("/")}>Ver canchas</button>
-          <button onClick={handleLogout}>Cerrar sesión</button>
-        </div>
-      </div>
+    <div className="min-h-screen bg-gray-50">
 
-      {/* Tabs */}
-      <div style={{ display: "flex", borderBottom: "1px solid #444", marginBottom: "1.5rem" }}>
-        <button style={tabStyle("canchas")} onClick={() => setActiveTab("canchas")}>
-          Mis canchas
-        </button>
-        <button style={tabStyle("pendientes")} onClick={() => setActiveTab("pendientes")}>
-          Pendientes {pendingReservations.length > 0 && `(${pendingReservations.length})`}
-        </button>
-        <button style={tabStyle("confirmadas")} onClick={() => setActiveTab("confirmadas")}>
-          Confirmadas
-        </button>
-      </div>
-
-      {/* Tab: Mis canchas */}
-      {activeTab === "canchas" && (
-        <>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-            <h2 style={{ margin: 0 }}>Mis canchas</h2>
-            <button onClick={() => setShowForm(!showForm)}>
-              {showForm ? "Cancelar" : "+ Agregar cancha"}
+      {/* Navbar */}
+      <nav className="bg-white border-b border-gray-100 sticky top-0 z-10">
+        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">🏟️</span>
+            <span className="font-bold text-gray-900 text-lg">Reservá Tu Cancha</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => navigate("/")} className="text-sm text-gray-600 hover:text-green-600 font-medium px-3 py-2 rounded-lg hover:bg-green-50 transition-colors">
+              Ver canchas
+            </button>
+            <button onClick={() => { signOut(auth); navigate("/login"); }} className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium px-4 py-2 rounded-lg transition-colors">
+              Salir
             </button>
           </div>
+        </div>
+      </nav>
 
-          {showForm && (
-            <form onSubmit={handleSubmit} style={{ border: "1px solid #ccc", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
-              <h3>Nueva cancha</h3>
-              <input placeholder="Nombre de la cancha" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required style={{ display: "block", width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
-              <select value={form.sport} onChange={(e) => setForm({ ...form, sport: e.target.value })} style={{ display: "block", width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }}>
-                <option value="futbol">Fútbol</option>
-                <option value="padel">Pádel</option>
-                <option value="tenis">Tenis</option>
-                <option value="basquet">Básquet</option>
-              </select>
-              <input placeholder="Precio por hora" type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required style={{ display: "block", width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
-              <input placeholder="Ubicación" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} required style={{ display: "block", width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
-              <button type="submit" style={{ padding: "0.5rem 1rem" }}>Guardar cancha</button>
-            </form>
+      <div className="max-w-5xl mx-auto px-4 py-8">
+
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold text-gray-900">Mi panel</h1>
+          {activeTab === "canchas" && (
+            <button onClick={() => setShowForm(!showForm)} className="bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors">
+              {showForm ? "Cancelar" : "+ Agregar cancha"}
+            </button>
           )}
+        </div>
 
-          {courts.length === 0 ? (
-            <p>Todavía no tenés canchas cargadas.</p>
+        {/* Form */}
+        {showForm && activeTab === "canchas" && (
+          <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-6 space-y-4">
+            <h2 className="font-semibold text-gray-900">Nueva cancha</h2>
+            <input placeholder="Nombre de la cancha" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
+            <select value={form.sport} onChange={(e) => setForm({ ...form, sport: e.target.value })} className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
+              <option value="futbol">⚽ Fútbol</option>
+              <option value="padel">🎾 Pádel</option>
+              <option value="tenis">🎾 Tenis</option>
+              <option value="basquet">🏀 Básquet</option>
+            </select>
+            <input placeholder="Precio por hora" type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
+            <input placeholder="Ubicación" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} required className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
+            <button type="submit" className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 rounded-xl transition-colors">
+              Guardar cancha
+            </button>
+          </form>
+        )}
+
+        {/* Tabs */}
+        <div className="flex bg-white border border-gray-100 rounded-xl p-1 mb-6 shadow-sm">
+          {tabs.map((tab) => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === tab.id ? "bg-green-500 text-white shadow" : "text-gray-500 hover:text-gray-700"}`}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab: Canchas */}
+        {activeTab === "canchas" && (
+          courts.length === 0 ? (
+            <div className="text-center py-20 text-gray-400">Todavía no tenés canchas cargadas.</div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {courts.map((court) => (
-                <div key={court.id} style={{ border: "1px solid #ccc", borderRadius: "8px", padding: "1rem" }}>
-                  <h3>{court.name}</h3>
-                  <p>🏅 {court.sport}</p>
-                  <p>📍 {court.location}</p>
-                  <p>💰 ${court.price}/hora</p>
-                  <p>{court.available ? "✅ Disponible" : "❌ No disponible"}</p>
+                <div key={court.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                  <div className="bg-gradient-to-br from-green-400 to-emerald-500 p-6 flex items-center justify-center">
+                    <span className="text-4xl">{sportEmoji(court.sport)}</span>
+                  </div>
+                  <div className="p-4">
+                    <h3 className="font-bold text-gray-900">{court.name}</h3>
+                    <p className="text-gray-500 text-sm mt-1">📍 {court.location}</p>
+                    <p className="font-bold text-gray-900 mt-2">${court.price}<span className="text-gray-400 font-normal text-sm">/hora</span></p>
+                    <span className={`text-xs font-semibold px-2 py-1 rounded-full mt-2 inline-block ${court.available ? "bg-green-50 text-green-600" : "bg-red-50 text-red-500"}`}>
+                      {court.available ? "✅ Disponible" : "❌ No disponible"}
+                    </span>
+                  </div>
                 </div>
               ))}
             </div>
-          )}
-        </>
-      )}
+          )
+        )}
 
-      {/* Tab: Pendientes */}
-      {activeTab === "pendientes" && (
-        <>
-          <h2>Reservas pendientes</h2>
-          {pendingReservations.length === 0 ? (
-            <p>No hay reservas pendientes.</p>
+        {/* Tab: Pendientes */}
+        {activeTab === "pendientes" && (
+          pendingReservations.length === 0 ? (
+            <div className="text-center py-20 text-gray-400">No hay reservas pendientes.</div>
           ) : (
-            pendingReservations.map((res) => (
-              <div key={res.id} style={{ border: "1px solid #f0a500", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
-                <p>🏟️ <strong>{getCourtName(res.courtId)}</strong></p>
-                <p>👤 {res.clientName}</p>
-                <p>📅 {res.date} a las {res.startTime}hs</p>
-                <p>⏳ Estado: <strong>Pendiente de pago</strong></p>
-                <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
-                  <button
-                    onClick={() => handleConfirm(res.id)}
-                    style={{ padding: "0.5rem 1rem", backgroundColor: "#2a7", color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}
-                  >
-                    ✅ Confirmar pago
-                  </button>
-                  <button
-                    onClick={() => handleReject(res.id)}
-                    style={{ padding: "0.5rem 1rem", backgroundColor: "#c00", color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}
-                  >
-                    ❌ Rechazar
-                  </button>
+            <div className="space-y-4">
+              {pendingReservations.map((res) => (
+                <div key={res.id} className="bg-white rounded-2xl border border-amber-100 shadow-sm p-5">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h3 className="font-bold text-gray-900">{getCourtName(res.courtId)}</h3>
+                      <p className="text-gray-500 text-sm mt-1">👤 {res.clientName}</p>
+                      <p className="text-gray-500 text-sm">📅 {res.date} a las {res.startTime}hs</p>
+                    </div>
+                    <span className="text-xs font-semibold bg-amber-50 text-amber-600 px-2 py-1 rounded-full">Pendiente</span>
+                  </div>
+                  <div className="flex gap-2 mt-4">
+                    <button onClick={() => handleConfirm(res.id)} className="flex-1 bg-green-500 hover:bg-green-600 text-white text-sm font-semibold py-2 rounded-xl transition-colors">
+                      ✅ Confirmar pago
+                    </button>
+                    <button onClick={() => handleReject(res.id)} className="flex-1 bg-red-50 hover:bg-red-100 text-red-500 text-sm font-semibold py-2 rounded-xl transition-colors">
+                      ❌ Rechazar
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))
-          )}
-        </>
-      )}
+              ))}
+            </div>
+          )
+        )}
 
-      {/* Tab: Confirmadas */}
-      {activeTab === "confirmadas" && (
-        <>
-          <h2>Reservas confirmadas</h2>
-          {confirmedReservations.length === 0 ? (
-            <p>No hay reservas confirmadas aún.</p>
+        {/* Tab: Confirmadas */}
+        {activeTab === "confirmadas" && (
+          confirmedReservations.length === 0 ? (
+            <div className="text-center py-20 text-gray-400">No hay reservas confirmadas aún.</div>
           ) : (
-            confirmedReservations.map((res) => (
-              <div key={res.id} style={{ border: "1px solid #2a7", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
-                <p>🏟️ <strong>{getCourtName(res.courtId)}</strong></p>
-                <p>👤 {res.clientName}</p>
-                <p>📅 {res.date} a las {res.startTime}hs</p>
-                <p>✅ Estado: <strong>Confirmada</strong></p>
-              </div>
-            ))
-          )}
-        </>
-      )}
+            <div className="space-y-4">
+              {confirmedReservations.map((res) => (
+                <div key={res.id} className="bg-white rounded-2xl border border-green-100 shadow-sm p-5">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h3 className="font-bold text-gray-900">{getCourtName(res.courtId)}</h3>
+                      <p className="text-gray-500 text-sm mt-1">👤 {res.clientName}</p>
+                      <p className="text-gray-500 text-sm">📅 {res.date} a las {res.startTime}hs</p>
+                    </div>
+                    <span className="text-xs font-semibold bg-green-50 text-green-600 px-2 py-1 rounded-full">Confirmada</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        )}
+      </div>
     </div>
   );
 }

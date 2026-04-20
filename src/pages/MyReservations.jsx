@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { collection, query, where, getDocs, doc, updateDoc } from "firebase/firestore";
-import { db } from "../firebase/config";
+import { db, auth } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { signOut } from "firebase/auth";
-import { auth } from "../firebase/config";
 
 function MyReservations() {
   const { user } = useAuth();
@@ -18,7 +17,6 @@ function MyReservations() {
     const snapshot = await getDocs(q);
     const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
-    // Traer los nombres de las canchas
     const courtIds = [...new Set(data.map((r) => r.courtId))];
     const courtData = {};
     for (const courtId of courtIds) {
@@ -31,66 +29,91 @@ function MyReservations() {
     setLoading(false);
   };
 
-  useEffect(() => {
-    fetchReservations();
-  }, []);
+  useEffect(() => { fetchReservations(); }, []);
 
   const handleCancel = async (reservationId) => {
-    await updateDoc(doc(db, "reservations", reservationId), {
-      status: "cancelled",
-    });
+    await updateDoc(doc(db, "reservations", reservationId), { status: "cancelled" });
     fetchReservations();
   };
 
-  const handleLogout = async () => {
-    await signOut(auth);
-    navigate("/login");
+  const statusConfig = (status) => {
+    if (status === "pending") return { label: "Pendiente de pago", bg: "bg-amber-50", text: "text-amber-600", border: "border-amber-100" };
+    if (status === "confirmed") return { label: "Confirmada", bg: "bg-green-50", text: "text-green-600", border: "border-green-100" };
+    if (status === "cancelled") return { label: "Cancelada", bg: "bg-red-50", text: "text-red-500", border: "border-red-100" };
+    return { label: status, bg: "bg-gray-50", text: "text-gray-500", border: "border-gray-100" };
   };
 
-  const statusLabel = (status) => {
-    if (status === "pending") return { text: "⏳ Pendiente de pago", color: "#f0a500" };
-    if (status === "confirmed") return { text: "✅ Confirmada", color: "#2a7" };
-    if (status === "cancelled") return { text: "❌ Cancelada", color: "#c00" };
-    return { text: status, color: "white" };
-  };
-
-  if (loading) return <p>Cargando tus reservas...</p>;
+  if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Cargando tus reservas...</div>;
 
   return (
-    <div style={{ maxWidth: "700px", margin: "0 auto", padding: "2rem" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h1>📋 Mis reservas</h1>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          <button onClick={() => navigate("/")}>← Volver</button>
-          <button onClick={handleLogout}>Cerrar sesión</button>
-        </div>
-      </div>
+    <div className="min-h-screen bg-gray-50">
 
-      {reservations.length === 0 ? (
-        <p>Todavía no hiciste ninguna reserva.</p>
-      ) : (
-        reservations.map((res) => {
-          const court = courts[res.courtId];
-          const status = statusLabel(res.status);
-          return (
-            <div key={res.id} style={{ border: `1px solid ${status.color}`, borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
-              <h3>{court ? court.name : "Cancha"}</h3>
-              <p>📅 {res.date} a las {res.startTime}hs</p>
-              <p>📍 {court ? court.location : ""}</p>
-              <p>💰 ${court ? court.price : ""}/hora</p>
-              <p style={{ color: status.color }}>{status.text}</p>
-              {res.status === "pending" && (
-                <button
-                  onClick={() => handleCancel(res.id)}
-                  style={{ marginTop: "0.5rem", padding: "0.5rem 1rem", backgroundColor: "#c00", color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}
-                >
-                  Cancelar reserva
-                </button>
-              )}
-            </div>
-          );
-        })
-      )}
+      {/* Navbar */}
+      <nav className="bg-white border-b border-gray-100 sticky top-0 z-10">
+        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">⚽</span>
+            <span className="font-bold text-gray-900 text-lg">Reservá Tu Cancha</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => navigate("/")} className="text-sm text-gray-600 hover:text-green-600 font-medium px-3 py-2 rounded-lg hover:bg-green-50 transition-colors">
+              ← Volver
+            </button>
+            <button onClick={() => { signOut(auth); navigate("/login"); }} className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium px-4 py-2 rounded-lg transition-colors">
+              Salir
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <div className="max-w-2xl mx-auto px-4 py-8">
+
+        {/* Header */}
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-gray-900">Mis reservas</h1>
+          <p className="text-gray-500 mt-1">Historial de todas tus reservas</p>
+        </div>
+
+        {reservations.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-12 text-center">
+            <span className="text-5xl">📋</span>
+            <p className="text-gray-400 mt-4">Todavía no hiciste ninguna reserva.</p>
+            <button onClick={() => navigate("/")} className="mt-4 bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-6 py-2 rounded-xl transition-colors">
+              Ver canchas
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {reservations.map((res) => {
+              const court = courts[res.courtId];
+              const status = statusConfig(res.status);
+              return (
+                <div key={res.id} className={`bg-white rounded-2xl border ${status.border} shadow-sm p-5`}>
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <h3 className="font-bold text-gray-900">{court ? court.name : "Cancha"}</h3>
+                      <p className="text-gray-500 text-sm mt-1">📍 {court ? court.location : ""}</p>
+                      <p className="text-gray-500 text-sm">📅 {res.date} a las {res.startTime}hs</p>
+                      <p className="text-gray-500 text-sm">💰 ${court ? court.price : ""}/hora</p>
+                    </div>
+                    <span className={`text-xs font-semibold ${status.bg} ${status.text} px-3 py-1 rounded-full whitespace-nowrap ml-3`}>
+                      {status.label}
+                    </span>
+                  </div>
+                  {res.status === "pending" && (
+                    <button
+                      onClick={() => handleCancel(res.id)}
+                      className="mt-4 w-full bg-red-50 hover:bg-red-100 text-red-500 text-sm font-semibold py-2 rounded-xl transition-colors"
+                    >
+                      Cancelar reserva
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

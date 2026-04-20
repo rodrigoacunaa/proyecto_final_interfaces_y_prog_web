@@ -37,41 +37,75 @@ function Login() {
   };
 
   return (
-    <div style={{ maxWidth: "400px", margin: "100px auto", padding: "2rem" }}>
-      <h1>CourtBook 🏟️</h1>
-      <h2>{isRegistering ? "Registrarse" : "Iniciar sesión"}</h2>
+    <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-8">
 
-      {error && <p style={{ color: "red" }}>{error}</p>}
+        {/* Logo */}
+        <div className="text-center mb-8">
+          <span className="text-4xl">⚽</span>
+          <h1 className="text-3xl font-bold text-gray-900 mt-2">Reservá Tu Cancha</h1>
+          <p className="text-gray-500 mt-1">La forma más fácil de reservar tu turno</p>
+        </div>
 
-      <form onSubmit={handleEmailAuth}>
-        <div>
+        {/* Tabs */}
+        <div className="flex bg-gray-100 rounded-xl p-1 mb-6">
+          <button
+            onClick={() => setIsRegistering(false)}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${!isRegistering ? "bg-white shadow text-green-600" : "text-gray-500"}`}
+          >
+            Iniciar sesión
+          </button>
+          <button
+            onClick={() => setIsRegistering(true)}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${isRegistering ? "bg-white shadow text-green-600" : "text-gray-500"}`}
+          >
+            Registrarse
+          </button>
+        </div>
+
+        {error && (
+          <div className="bg-red-50 text-red-600 text-sm rounded-lg px-4 py-3 mb-4">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleEmailAuth} className="space-y-4">
           <input
             type="email"
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            style={{ display: "block", width: "100%", marginBottom: "1rem", padding: "0.5rem" }}
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
           />
           <input
             type="password"
             placeholder="Contraseña"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            style={{ display: "block", width: "100%", marginBottom: "1rem", padding: "0.5rem" }}
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
           />
-          <button type="submit" style={{ width: "100%", padding: "0.5rem" }}>
-            {isRegistering ? "Registrarse" : "Iniciar sesión"}
+          <button
+            type="submit"
+            className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 rounded-xl transition-colors"
+          >
+            {isRegistering ? "Crear cuenta" : "Ingresar"}
           </button>
+        </form>
+
+        <div className="flex items-center gap-3 my-5">
+          <div className="flex-1 h-px bg-gray-200"></div>
+          <span className="text-gray-400 text-sm">o</span>
+          <div className="flex-1 h-px bg-gray-200"></div>
         </div>
-      </form>
 
-      <button onClick={handleGoogle} style={{ width: "100%", padding: "0.5rem", marginTop: "1rem" }}>
-        Iniciar sesión con Google 🔵
-      </button>
-
-      <p style={{ marginTop: "1rem", cursor: "pointer", color: "blue" }} onClick={() => setIsRegistering(!isRegistering)}>
-        {isRegistering ? "¿Ya tenés cuenta? Iniciá sesión" : "¿No tenés cuenta? Registrate"}
-      </p>
+        <button
+          onClick={handleGoogle}
+          className="w-full flex items-center justify-center gap-3 border border-gray-200 hover:bg-gray-50 text-gray-700 font-medium py-3 rounded-xl transition-colors"
+        >
+          <img src="https://www.google.com/favicon.ico" className="w-4 h-4" />
+          Continuar con Google
+        </button>
+      </div>
     </div>
   );
 }
