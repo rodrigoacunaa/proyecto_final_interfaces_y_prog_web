@@ -2,7 +2,6 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
 import Login from "./pages/Login";
 import Home from "./pages/Home";
-import Dashboard from "./pages/Dashboard";
 import OwnerPanel from "./pages/OwnerPanel";
 import Reserve from "./pages/Reserve";
 import MyReservations from "./pages/MyReservations";
@@ -24,6 +23,14 @@ function OwnerRoute({ children }) {
   return children;
 }
 
+// redirige según el rol al entrar a la raíz
+function RootRoute({ children }) {
+  const { user, userRole } = useAuth();
+  if (!user) return <Navigate to="/login" />;
+  if (userRole === "owner" || userRole === "superadmin") return <Navigate to="/owner" />;
+  return children;
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -31,14 +38,12 @@ function App() {
         <Route path="/login" element={
           <PublicRoute><Login /></PublicRoute>
         } />
+        {/* la raíz ahora redirige según el rol */}
         <Route path="/" element={
-          <PrivateRoute><Home /></PrivateRoute>
+          <RootRoute><Home /></RootRoute>
         } />
         <Route path="/owner" element={
           <OwnerRoute><OwnerPanel /></OwnerRoute>
-        } />
-        <Route path="/dashboard" element={
-          <PrivateRoute><Dashboard /></PrivateRoute>
         } />
         <Route path="/reserve/:courtId" element={
           <PrivateRoute><Reserve /></PrivateRoute>

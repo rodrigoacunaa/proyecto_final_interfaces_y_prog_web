@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { collection, addDoc, getDocs, query, where, doc, updateDoc } from "firebase/firestore";
+import { collection, addDoc, getDocs, query, where, doc, updateDoc, deleteDoc } from "firebase/firestore";
 import { db, auth } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
@@ -20,38 +20,46 @@ function OwnerPanel() {
 
   const [loading, setLoading] = useState(true);
 
-  //se muestra el form de nueva cancha?
+  //controla visibilidad del form de nueva cancha
   const [showForm, setShowForm] = useState(false);
 
-  //qué cancha está seleccionada para ver sus horarios
+  //cancha seleccionada para ver sus horarios
   const [selectedCourt, setSelectedCourt] = useState(null);
 
-  //controla si el modal de horarios está abierto
+  //controla visibilidad del modal de horarios
   const [showScheduleModal, setShowScheduleModal] = useState(false);
 
-  //controla si el modal de detalle de reserva está abierto
+  //controla visibilidad del modal de detalle de reserva
   const [showReservationModal, setShowReservationModal] = useState(false);
 
   //reserva seleccionada al clickear un horario
   const [selectedReservation, setSelectedReservation] = useState(null);
 
-  //valores del form "nueva cancha"
+  //controla visibilidad del modal de edición de cancha
+  const [showEditModal, setShowEditModal] = useState(false);
+
+  //cancha siendo editada actualmente
+  const [courtToEdit, setCourtToEdit] = useState(null);
+
+  //valores del form de edición — se inicializan al seleccionar una cancha
+  const [editForm, setEditForm] = useState({ name: "", sport: "futbol", price: "", location: "" });
+
+  //errores de validación del form de edición
+  const [editErrors, setEditErrors] = useState({});
+
+  //valores del form de nueva cancha
   const [form, setForm] = useState({ name: "", sport: "futbol", price: "", location: "" });
 
   const fetchMyCourts = async () => {
-    //solo se muestran las canchas que coinciden con el id del dueño
     const q = query(collection(db, "courts"), where("ownerId", "==", user.uid));
     const snapshot = await getDocs(q);
     setCourts(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
   };
 
   const fetchReservations = async () => {
-    //traemos la fecha de hoy en formato YYYY-MM-DD
     let fecha = new Date().toISOString().split("T")[0];
     const [pendingSnap, confirmedSnap] = await Promise.all([
-      //solo reservas pendientes del día
       getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "pending"), where("date", "==", fecha))),
-      //solo reservas confirmadas del día
       getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "confirmed"), where("date", "==", fecha))),
     ]);
     setPendingReservations(pendingSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
@@ -63,7 +71,6 @@ function OwnerPanel() {
 
   const handleConfirm = async (id) => {
     await updateDoc(doc(db, "reservations", id), { status: "confirmed" });
-    //recargamos las reservas para reflejar el cambio en la grilla
     fetchReservations();
   };
 
@@ -80,34 +87,68 @@ function OwnerPanel() {
     fetchMyCourts();
   };
 
-  //horarios disponibles de 9am a medianoche
+  const handleLogout = async () => {
+    await signOut(auth);
+    navigate("/login");
+  };
+
+  // al elegir una cancha del select, cargamos sus datos en el form de edición
+  const handleSelectCourtToEdit = (courtId) => {
+    const court = courts.find((c) => c.id === courtId);
+    if (!court) return;
+    setCourtToEdit(court);
+    setEditForm({ name: court.name, sport: court.sport, price: court.price, location: court.location });
+    setEditErrors({});
+  };
+
+  // valida que ningún campo del form de edición esté vacío
+  const validateEditForm = () => {
+    const errors = {};
+    if (!editForm.name.trim()) errors.name = "El nombre no puede estar vacío";
+    if (!editForm.price) errors.price = "El precio no puede estar vacío";
+    if (!editForm.location.trim()) errors.location = "La ubicación no puede estar vacía";
+    setEditErrors(errors);
+    //retorna true si no hay errores
+    return Object.keys(errors).length === 0;
+  };
+
+  // guarda los cambios de la cancha editada en Firestore
+  const handleSaveEdit = async () => {
+    if (!validateEditForm()) return;
+    await updateDoc(doc(db, "courts", courtToEdit.id), {
+      name: editForm.name,
+      sport: editForm.sport,
+      price: Number(editForm.price),
+      location: editForm.location,
+    });
+    setShowEditModal(false);
+    setCourtToEdit(null);
+    fetchMyCourts();
+  };
+
+  // elimina la cancha de Firestore
+  const handleDeleteCourt = async () => {
+    if (!window.confirm(`¿Estás seguro que querés eliminar "${courtToEdit.name}"? Esta acción no se puede deshacer.`)) return;
+    await deleteDoc(doc(db, "courts", courtToEdit.id));
+    setShowEditModal(false);
+    setCourtToEdit(null);
+    fetchMyCourts();
+  };
+
   const HORARIOS = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"];
 
   const sportEmoji = (sport) => ({ futbol: "⚽", padel: "🎾", tenis: "🎾", basquet: "🏀" }[sport] || "🏅");
   const sportLabel = (sport) => ({ futbol: "Fútbol", padel: "Pádel", tenis: "Tenis", basquet: "Básquet" }[sport] || sport);
 
-  //dado un horario, busca si existe una reserva (confirmada o pendiente) para la cancha seleccionada hoy
   const getReservation = (horario) => {
     let fecha = new Date().toISOString().split("T")[0];
-
-    const res = confirmedReservations.find(reserva =>
-      reserva.courtId === selectedCourt?.id &&
-      reserva.startTime === horario &&
-      reserva.date === fecha
-    );
-
-    const pending_res = pendingReservations.find(reserva =>
-      reserva.courtId === selectedCourt?.id &&
-      reserva.startTime === horario &&
-      reserva.date === fecha
-    );
-
+    const res = confirmedReservations.find(r => r.courtId === selectedCourt?.id && r.startTime === horario && r.date === fecha);
+    const pending_res = pendingReservations.find(r => r.courtId === selectedCourt?.id && r.startTime === horario && r.date === fecha);
     if (res != null) return res;
     else if (pending_res != null) return pending_res;
     else return null;
   };
 
-  //abre el modal de horarios con la cancha seleccionada
   const handleCourtClick = (court) => {
     setSelectedCourt(court);
     setShowScheduleModal(true);
@@ -125,28 +166,34 @@ function OwnerPanel() {
             <span className="text-2xl">🏟️</span>
             <span className="font-bold text-gray-900 text-lg">Reservá Tu Cancha</span>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => navigate("/")} className="text-sm text-gray-600 hover:text-green-600 font-medium px-3 py-2 rounded-lg hover:bg-green-50 transition-colors">
-              Ver canchas
-            </button>
-            <button onClick={() => { signOut(auth); navigate("/login"); }} className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium px-4 py-2 rounded-lg transition-colors">
-              Salir
-            </button>
-          </div>
+          <button onClick={handleLogout} className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium px-4 py-2 rounded-lg transition-colors">
+            Salir
+          </button>
         </div>
       </nav>
 
       <div className="max-w-5xl mx-auto px-4 py-8">
 
-        {/* Header */}
+        {/* Header con botones de agregar y editar cancha */}
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Mi panel</h1>
-          <button onClick={() => setShowForm(!showForm)} className="bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors">
-            {showForm ? "Cancelar" : "+ Agregar cancha"}
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => { setShowEditModal(true); setCourtToEdit(null); setEditErrors({}); }}
+              className="bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
+            >
+              ✏️ Editar cancha
+            </button>
+            <button
+              onClick={() => setShowForm(!showForm)}
+              className="bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
+            >
+              {showForm ? "Cancelar" : "+ Agregar cancha"}
+            </button>
+          </div>
         </div>
 
-        {/* Form nueva cancha */}
+        {/* Form de nueva cancha */}
         {showForm && (
           <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-6 space-y-4">
             <h2 className="font-semibold text-gray-900">Nueva cancha</h2>
@@ -165,13 +212,12 @@ function OwnerPanel() {
           </form>
         )}
 
-        {/* Cards de canchas — reemplaza el <select> anterior */}
+        {/* Cards de canchas */}
         {courts.length === 0 ? (
           <div className="text-center py-20 text-gray-400">Todavía no tenés canchas cargadas.</div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {courts.map((court) => (
-              //al clickear la card se abre el modal de horarios con esa cancha
               <button
                 key={court.id}
                 onClick={() => handleCourtClick(court)}
@@ -193,26 +239,117 @@ function OwnerPanel() {
           </div>
         )}
 
-        {/* Modal de horarios — se abre al clickear una cancha */}
+        {/* Modal de edición de cancha */}
+        {showEditModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl w-full max-w-md">
+
+              {/* Header del modal */}
+              <div className="flex items-center justify-between p-6 border-b border-gray-100">
+                <h2 className="font-bold text-gray-900 text-lg">Editar cancha</h2>
+                <button onClick={() => setShowEditModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors">✕</button>
+              </div>
+
+              <div className="p-6 space-y-4">
+
+                {/* Select para elegir qué cancha editar */}
+                <select
+                  onChange={(e) => handleSelectCourtToEdit(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                  defaultValue=""
+                >
+                  <option value="" disabled>-- Elegí una cancha --</option>
+                  {courts.map((court) => (
+                    <option key={court.id} value={court.id}>{court.name}</option>
+                  ))}
+                </select>
+
+                {/* Form de edición — solo visible cuando se seleccionó una cancha */}
+                {courtToEdit && (
+                  <div className="space-y-4 pt-2">
+
+                    {/* Campo nombre */}
+                    <div>
+                      <input
+                        placeholder="Nombre de la cancha"
+                        value={editForm.name}
+                        onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 ${editErrors.name ? "border-red-400" : "border-gray-200"}`}
+                      />
+                      {editErrors.name && <p className="text-red-500 text-xs mt-1">{editErrors.name}</p>}
+                    </div>
+
+                    {/* Campo deporte */}
+                    <select
+                      value={editForm.sport}
+                      onChange={(e) => setEditForm({ ...editForm, sport: e.target.value })}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                    >
+                      <option value="futbol">⚽ Fútbol</option>
+                      <option value="padel">🎾 Pádel</option>
+                      <option value="tenis">🎾 Tenis</option>
+                      <option value="basquet">🏀 Básquet</option>
+                    </select>
+
+                    {/* Campo precio */}
+                    <div>
+                      <input
+                        placeholder="Precio por hora"
+                        type="number"
+                        value={editForm.price}
+                        onChange={(e) => setEditForm({ ...editForm, price: e.target.value })}
+                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 ${editErrors.price ? "border-red-400" : "border-gray-200"}`}
+                      />
+                      {editErrors.price && <p className="text-red-500 text-xs mt-1">{editErrors.price}</p>}
+                    </div>
+
+                    {/* Campo ubicación */}
+                    <div>
+                      <input
+                        placeholder="Ubicación"
+                        value={editForm.location}
+                        onChange={(e) => setEditForm({ ...editForm, location: e.target.value })}
+                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 ${editErrors.location ? "border-red-400" : "border-gray-200"}`}
+                      />
+                      {editErrors.location && <p className="text-red-500 text-xs mt-1">{editErrors.location}</p>}
+                    </div>
+
+                    {/* Botones de guardar y eliminar */}
+                    <div className="flex gap-2 pt-2">
+                      <button
+                        onClick={handleSaveEdit}
+                        className="flex-1 bg-green-500 hover:bg-green-600 text-white font-semibold py-3 rounded-xl transition-colors"
+                      >
+                        Guardar cambios
+                      </button>
+                      <button
+                        onClick={handleDeleteCourt}
+                        className="flex-1 bg-red-50 hover:bg-red-100 text-red-500 font-semibold py-3 rounded-xl transition-colors"
+                      >
+                        🗑️ Eliminar
+                      </button>
+                    </div>
+
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de horarios */}
         {showScheduleModal && selectedCourt && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-
-              {/* Header del modal */}
               <div className="bg-gradient-to-br from-green-400 to-emerald-500 p-6 rounded-t-2xl flex items-center justify-between">
                 <div>
                   <h2 className="font-bold text-white text-xl">{selectedCourt.name}</h2>
                   <p className="text-green-100 text-sm">📍 {selectedCourt.location}</p>
                 </div>
-                <button
-                  onClick={() => setShowScheduleModal(false)}
-                  className="text-white hover:bg-white hover:bg-opacity-20 rounded-lg p-2 transition-colors"
-                >
+                <button onClick={() => setShowScheduleModal(false)} className="text-white hover:bg-white hover:bg-opacity-20 rounded-lg p-2 transition-colors">
                   ✕
                 </button>
               </div>
-
-              {/* Grilla de horarios */}
               <div className="p-6">
                 <div className="flex items-center gap-4 mb-4 text-xs font-semibold">
                   <span className="bg-green-100 text-green-600 px-2 py-1 rounded-full">🟢 Libre</span>
@@ -222,7 +359,6 @@ function OwnerPanel() {
                 <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                   {HORARIOS.map((hora) => {
                     const res = getReservation(hora);
-                    //derivamos el status del objeto reserva
                     const status = res != null ? res.status : null;
                     return (
                       <button
@@ -232,11 +368,7 @@ function OwnerPanel() {
                           : status === "pending" ? "bg-amber-100 text-amber-600"
                           : "bg-green-100 text-green-600"
                         }`}
-                        //al clickear un horario se abre el modal de detalle de reserva
-                        onClick={() => {
-                          setSelectedReservation(res);
-                          setShowReservationModal(true);
-                        }}
+                        onClick={() => { setSelectedReservation(res); setShowReservationModal(true); }}
                       >
                         {hora}
                       </button>
@@ -248,22 +380,18 @@ function OwnerPanel() {
           </div>
         )}
 
-        {/* Modal de detalle de reserva — se abre al clickear un horario */}
+        {/* Modal de detalle de reserva */}
         {showReservationModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl p-6 max-w-md w-full">
-
               <h2 className="font-bold text-gray-900 text-lg mb-4">
                 {selectedReservation ? "Detalle de reserva" : "Horario libre"}
               </h2>
-
               {selectedReservation ? (
                 <div className="space-y-2">
                   <p className="text-gray-600">👤 <strong>{selectedReservation.clientName}</strong></p>
                   <p className="text-gray-600">📅 {selectedReservation.date} a las {selectedReservation.startTime}hs</p>
                   <p className="text-gray-600">Estado: <strong>{selectedReservation.status === "confirmed" ? "✅ Confirmada" : "⏳ Pendiente"}</strong></p>
-
-                  {/* botones de confirmar/rechazar solo para reservas pendientes */}
                   {selectedReservation.status === "pending" && (
                     <div className="flex gap-2 mt-4">
                       <button
@@ -284,14 +412,12 @@ function OwnerPanel() {
               ) : (
                 <p className="text-gray-400">Este horario está disponible.</p>
               )}
-
               <button
                 onClick={() => setShowReservationModal(false)}
                 className="mt-6 w-full bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold py-2 rounded-xl transition-colors"
               >
                 Cerrar
               </button>
-
             </div>
           </div>
         )}
