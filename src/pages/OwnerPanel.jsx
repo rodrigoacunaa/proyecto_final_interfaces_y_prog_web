@@ -6,8 +6,12 @@ import { useNavigate } from "react-router-dom";
 import { signOut } from "firebase/auth";
 
 function OwnerPanel() {
-  const { user } = useAuth();
+  const { user, setUser } = useAuth();
   const navigate = useNavigate();
+
+  //wsp
+  const [isEditingPhone, setIsEditingPhone] = useState(false);
+  const [tempPhone, setTempPhone] = useState(user?.whatsapp || "");
 
   //canchas del dueño
   const [courts, setCourts] = useState([]);
@@ -67,7 +71,14 @@ function OwnerPanel() {
     setLoading(false);
   };
 
-  useEffect(() => { fetchMyCourts(); fetchReservations(); }, []);
+  useEffect(() => {
+    if (user) {
+      fetchMyCourts();
+      fetchReservations();
+      //Aseguramos que el input se llene con el numero que ya tenesmos
+      setTempPhone(user.whatsapp || "");
+    }
+  }, [user]);
 
   const handleConfirm = async (id) => {
     await updateDoc(doc(db, "reservations", id), { status: "confirmed" });
@@ -91,6 +102,33 @@ function OwnerPanel() {
     await signOut(auth);
     navigate("/login");
   };
+
+  // --- Funcion para guardar el número de WhatsApp ---
+  const handleSavePhone = async () => {
+    const cleanPhone = tempPhone.replace(/\D/g, "");
+
+    if (cleanPhone.length < 10) {
+      alert("El número es muy corto. Ingresá código de área completo (ej: 54911...).");
+      setTempPhone(user?.whatsapp || "");
+      setIsEditingPhone(false);
+      return;
+    }
+
+    try {
+      const userRef = doc(db, "users", user.uid);
+      await updateDoc(userRef, { whatsapp: cleanPhone });
+      
+      // Actualizamos el contexto global para que se vea el cambio al toque
+      setUser({ ...user, whatsapp: cleanPhone });
+      
+      setIsEditingPhone(false);
+      alert("WhatsApp guardado correctamente.");
+    } catch (error) {
+      console.error(error);
+      alert("Error al guardar en la base de datos.");
+    }
+  };
+
 
   // al elegir una cancha del select, cargamos sus datos en el form de edición
   const handleSelectCourtToEdit = (courtId) => {
@@ -177,6 +215,55 @@ function OwnerPanel() {
         {/* Header con botones de agregar y editar cancha */}
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Mi panel</h1>
+
+          {/* --- BANNER DE WHATSAPP GENERAL --- */}
+        <div className="mt-4 mb-8 bg-white border border-gray-100 rounded-3xl p-5 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="bg-green-100 p-3 rounded-2xl">
+              <img 
+                src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" 
+                alt="WA" 
+                className="w-7 h-7"
+              />
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">WhatsApp de Contacto General</p>
+              {isEditingPhone ? (
+                <input 
+                  value={tempPhone}
+                  onChange={(e) => setTempPhone(e.target.value)}
+                  placeholder="54911..."
+                  className="text-lg font-bold text-gray-900 border-b-2 border-green-500 outline-none w-full bg-transparent"
+                  autoFocus
+                />
+              ) : (
+                <p className="text-lg font-bold text-gray-900">{user?.whatsapp || "No configurado"}</p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex gap-2 w-full sm:w-auto">
+            {isEditingPhone ? (
+              <>
+                <button onClick={handleSavePhone} className="flex-1 bg-green-500 text-white px-5 py-2 rounded-xl font-bold text-sm hover:bg-green-600 transition-colors">
+                  Guardar
+                </button>
+                <button onClick={() => { setIsEditingPhone(false); setTempPhone(user?.whatsapp || ""); }} className="flex-1 bg-gray-100 text-gray-400 px-5 py-2 rounded-xl font-bold text-sm">
+                  Cancelar
+                </button>
+              </>
+            ) : (
+              <button 
+                onClick={() => { setIsEditingPhone(true); setTempPhone(user?.whatsapp || ""); }} 
+                className="w-full sm:w-auto bg-gray-900 text-white px-5 py-2 rounded-xl font-bold text-sm hover:bg-gray-800 transition-all flex items-center justify-center gap-2"
+              >
+                {user?.whatsapp ? "✏️ Editar número" : "+ Configurar WhatsApp"}
+              </button>
+            )}
+          </div>
+        </div>
+        {/* --- FIN BANNER WSP --- */}
+
           <div className="flex gap-2">
             <button
               onClick={() => { setShowEditModal(true); setCourtToEdit(null); setEditErrors({}); }}

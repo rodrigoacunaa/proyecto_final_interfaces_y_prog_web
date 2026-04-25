@@ -13,39 +13,43 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
-        // Buscar el documento del usuario en Firestore
         const userRef = doc(db, "users", currentUser.uid);
         const userSnap = await getDoc(userRef);
 
         if (userSnap.exists()) {
-          // Usuario ya existe, traer su rol
-          setUserRole(userSnap.data().role);
+          const userData = userSnap.data();
+          setUserRole(userData.role);
+          // Combinamos los datos de Auth y de Firestore en un solo estado
+          setUser({ ...currentUser, ...userData }); 
         } else {
-            // Se le da medio segundo a updateProfile para que llegue antes
+          // Si es usuario nuevo
           await new Promise((resolve) => setTimeout(resolve, 500));
-
-          // Despues de la espera, le pedimos a Firebase que recargue los datos del usuario con name actualizado
           await currentUser.reload();
-          // Usuario nuevo, crear documento con rol client
-          await setDoc(userRef, {
-            name: currentUser.displayName, //nombre
-            email: currentUser.email, //email
-            role: "client", //rol del usuario
-          });
+          
+          const newUserDoc = {
+            name: currentUser.displayName,
+            email: currentUser.email,
+            role: "client",
+            whatsapp: "" 
+          };
+
+          await setDoc(userRef, newUserDoc);
           setUserRole("client");
+          setUser({ ...currentUser, ...newUserDoc });
         }
-        setUser(currentUser);
       } else {
+        // Si no hay sesión activa
         setUser(null);
         setUserRole(null);
       }
+      // Movimos el loading acá para que termine solo después de procesar todo
       setLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, userRole, loading }}>
+    <AuthContext.Provider value={{ user, userRole, loading, setUser }}>
       {!loading && children}
     </AuthContext.Provider>
   );
