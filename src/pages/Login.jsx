@@ -1,12 +1,15 @@
 import { useState } from "react";
-import { signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, createUserWithEmailAndPassword } from "firebase/auth";
-import { auth } from "../firebase/config";
+import { signInWithEmailAndPassword, GoogleAuthProvider,
+signInWithPopup, createUserWithEmailAndPassword, 
+updateProfile } from "firebase/auth";import { auth } from "../firebase/config";
 import { useNavigate } from "react-router-dom";
+
 
 const provider = new GoogleAuthProvider();
 
 function Login() {
   const [email, setEmail] = useState("");
+  const [name, setName] = useState("")
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isRegistering, setIsRegistering] = useState(false);
@@ -17,7 +20,9 @@ function Login() {
     setError("");
     try {
       if (isRegistering) {
-        await createUserWithEmailAndPassword(auth, email, password);
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        //asignamos el nombre provisto en el formulario
+        await updateProfile(userCredential.user, {displayName: name})
       } else {
         await signInWithEmailAndPassword(auth, email, password);
       }
@@ -70,6 +75,18 @@ function Login() {
         )}
 
         <form onSubmit={handleEmailAuth} className="space-y-4">
+        
+          {isRegistering && (
+            <input
+            type="text"
+            placeholder="Tu nombre"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+          />
+          )}
+          
           <input
             type="email"
             placeholder="Email"

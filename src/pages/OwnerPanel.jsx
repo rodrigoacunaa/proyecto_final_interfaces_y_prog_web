@@ -8,23 +8,41 @@ import { signOut } from "firebase/auth";
 function OwnerPanel() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  //canchas del dueño
   const [courts, setCourts] = useState([]);
+
+  //reservas pendientes
   const [pendingReservations, setPendingReservations] = useState([]);
+
+  //reservas confirmadas
   const [confirmedReservations, setConfirmedReservations] = useState([]);
+
   const [loading, setLoading] = useState(true);
+
+  //se muestra el form de nueva cancha?
   const [showForm, setShowForm] = useState(false);
+
+  //qué pestaña está activa?
   const [activeTab, setActiveTab] = useState("canchas");
+
+  //valores del form "nueva cancha"
   const [form, setForm] = useState({ name: "", sport: "futbol", price: "", location: "" });
 
   const fetchMyCourts = async () => {
+    //solo se muestran las canchas que coinciden con el id del dueño
     const q = query(collection(db, "courts"), where("ownerId", "==", user.uid));
+    
+    //se traen todas las canchas 
     const snapshot = await getDocs(q);
     setCourts(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
   };
 
   const fetchReservations = async () => {
+    //traemos la fecha de hoy
+    let fecha = new Date().toISOString().split("T")[0]
     const [pendingSnap, confirmedSnap] = await Promise.all([
-      getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "pending"))),
+      //comparamos con la fecha de hoy para tener solo reservas del día
+      getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "pending"), where("date", "==", fecha))),
       getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "confirmed"))),
     ]);
     setPendingReservations(pendingSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));

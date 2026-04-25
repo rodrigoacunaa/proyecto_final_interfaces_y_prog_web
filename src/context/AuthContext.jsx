@@ -21,11 +21,16 @@ export function AuthProvider({ children }) {
           // Usuario ya existe, traer su rol
           setUserRole(userSnap.data().role);
         } else {
+            // Se le da medio segundo a updateProfile para que llegue antes
+          await new Promise((resolve) => setTimeout(resolve, 500));
+
+          // Despues de la espera, le pedimos a Firebase que recargue los datos del usuario con name actualizado
+          await currentUser.reload();
           // Usuario nuevo, crear documento con rol client
           await setDoc(userRef, {
-            name: currentUser.displayName || "Sin nombre",
-            email: currentUser.email,
-            role: "client",
+            name: currentUser.displayName, //nombre
+            email: currentUser.email, //email
+            role: "client", //rol del usuario
           });
           setUserRole("client");
         }
