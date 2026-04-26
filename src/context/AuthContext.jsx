@@ -13,34 +13,43 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
-        // Buscar el documento del usuario en Firestore
         const userRef = doc(db, "users", currentUser.uid);
         const userSnap = await getDoc(userRef);
 
         if (userSnap.exists()) {
-          // Usuario ya existe, traer su rol
-          setUserRole(userSnap.data().role);
+          const userData = userSnap.data();
+          setUserRole(userData.role);
+          // Combinamos los datos de Auth y de Firestore en un solo estado
+          setUser({ ...currentUser, ...userData }); 
         } else {
-          // Usuario nuevo, crear documento con rol client
-          await setDoc(userRef, {
-            name: currentUser.displayName || "Sin nombre",
+          // Si es usuario nuevo
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          await currentUser.reload();
+          
+          const newUserDoc = {
+            name: currentUser.displayName,
             email: currentUser.email,
             role: "client",
-          });
+            whatsapp: "" 
+          };
+
+          await setDoc(userRef, newUserDoc);
           setUserRole("client");
+          setUser({ ...currentUser, ...newUserDoc });
         }
-        setUser(currentUser);
       } else {
+        // Si no hay sesión activa
         setUser(null);
         setUserRole(null);
       }
+      // Movimos el loading acá para que termine solo después de procesar todo
       setLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, userRole, loading }}>
+    <AuthContext.Provider value={{ user, userRole, loading, setUser }}>
       {!loading && children}
     </AuthContext.Provider>
   );
