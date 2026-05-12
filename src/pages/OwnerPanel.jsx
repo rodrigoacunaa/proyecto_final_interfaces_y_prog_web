@@ -1,26 +1,36 @@
 import { useState, useEffect } from "react";
 import { collection, addDoc, getDocs, query, where, doc, updateDoc, deleteDoc } from "firebase/firestore";
-import { db, auth } from "../firebase/config";
+import { db } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { signOut } from "firebase/auth";
+import Navbar from "../components/Navbar";
+import { useAsyncAction } from "../hooks/useAsyncAction";
 
 function OwnerPanel() {
-  const { user, setUser } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
 
-  //wsp
-  const [isEditingPhone, setIsEditingPhone] = useState(false);
-  const [tempPhone, setTempPhone] = useState(user?.whatsapp || "");
+  const { run: runAddCourt,    loading: addingCourt    } = useAsyncAction();
+  const { run: runSaveEdit,    loading: savingEdit     } = useAsyncAction();
+  const { run: runDeleteCourt, loading: deletingCourt  } = useAsyncAction();
+  const { run: runConfirm,     loading: confirmingRes  } = useAsyncAction();
+  const { run: runReject,      loading: rejectingRes   } = useAsyncAction();
 
-  //canchas del dueño
+  //canchas del dueno
   const [courts, setCourts] = useState([]);
 
-  //reservas pendientes del día
+  //reservas pendientes del dia (para el panel principal)
   const [pendingReservations, setPendingReservations] = useState([]);
 
-  //reservas confirmadas del día
+  //reservas confirmadas del dia (para el panel principal)
   const [confirmedReservations, setConfirmedReservations] = useState([]);
+
+  //todas las reservas de la cancha seleccionada (para el modal de horarios)
+  const [courtReservations, setCourtReservations] = useState([]);
+
+  //fecha seleccionada en el modal de horarios (default hoy)
+  const today = new Date().toISOString().split("T")[0];
+  const [selectedScheduleDate, setSelectedScheduleDate] = useState(today);
 
   const [loading, setLoading] = useState(true);
 
@@ -39,16 +49,16 @@ function OwnerPanel() {
   //reserva seleccionada al clickear un horario
   const [selectedReservation, setSelectedReservation] = useState(null);
 
-  //controla visibilidad del modal de edición de cancha
+  //controla visibilidad del modal de edicion de cancha
   const [showEditModal, setShowEditModal] = useState(false);
 
   //cancha siendo editada actualmente
   const [courtToEdit, setCourtToEdit] = useState(null);
 
-  //valores del form de edición — se inicializan al seleccionar una cancha
+  //valores del form de edicion — se inicializan al seleccionar una cancha
   const [editForm, setEditForm] = useState({ name: "", sport: "futbol", price: "", location: "" });
 
-  //errores de validación del form de edición
+  //errores de validacion del form de edicion
   const [editErrors, setEditErrors] = useState({});
 
   //valores del form de nueva cancha
@@ -61,7 +71,7 @@ function OwnerPanel() {
   };
 
   const fetchReservations = async () => {
-    let fecha = new Date().toISOString().split("T")[0];
+    const fecha = new Date().toISOString().split("T")[0];
     const [pendingSnap, confirmedSnap] = await Promise.all([
       getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "pending"), where("date", "==", fecha))),
       getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "confirmed"), where("date", "==", fecha))),
@@ -71,66 +81,54 @@ function OwnerPanel() {
     setLoading(false);
   };
 
+  //fetches reservas activas de una cancha — filtra fechas client-side para evitar
+  //indices compuestos en Firestore (in + >= en campos distintos falla sin indice)
+  const fetchCourtReservations = async (courtId) => {
+    const q = query(
+      collection(db, "reservations"),
+      where("courtId", "==", courtId),
+      where("status", "in", ["confirmed", "pending"])
+    );
+    const snapshot = await getDocs(q);
+    const all = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+    //filtramos client-side para mostrar solo desde hoy en adelante
+    setCourtReservations(all.filter((r) => r.date >= today));
+  };
+
   useEffect(() => {
     if (user) {
       fetchMyCourts();
       fetchReservations();
-      //Aseguramos que el input se llene con el numero que ya tenesmos
-      setTempPhone(user.whatsapp || "");
     }
   }, [user]);
 
-  const handleConfirm = async (id) => {
+  const handleConfirm = (id) => runConfirm(async () => {
     await updateDoc(doc(db, "reservations", id), { status: "confirmed" });
+    //actualizacion optimista: cambia el estado local sin esperar un nuevo fetch
+    setCourtReservations(prev => prev.map(r => r.id === id ? { ...r, status: "confirmed" } : r));
+    setPendingReservations(prev => prev.filter(r => r.id !== id));
     fetchReservations();
-  };
+  });
 
-  const handleReject = async (id) => {
+  const handleReject = (id) => runReject(async () => {
     await updateDoc(doc(db, "reservations", id), { status: "cancelled" });
+    //actualizacion optimista: elimina la reserva del estado local de inmediato
+    setCourtReservations(prev => prev.filter(r => r.id !== id));
+    setPendingReservations(prev => prev.filter(r => r.id !== id));
     fetchReservations();
-  };
+  });
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
-    await addDoc(collection(db, "courts"), { ...form, price: Number(form.price), available: true, ownerId: user.uid });
-    setForm({ name: "", sport: "futbol", price: "", location: "" });
-    setShowForm(false);
-    fetchMyCourts();
+    runAddCourt(async () => {
+      await addDoc(collection(db, "courts"), { ...form, price: Number(form.price), available: true, ownerId: user.uid });
+      setForm({ name: "", sport: "futbol", price: "", location: "" });
+      setShowForm(false);
+      fetchMyCourts();
+    });
   };
 
-  const handleLogout = async () => {
-    await signOut(auth);
-    navigate("/login");
-  };
-
-  // --- Funcion para guardar el número de WhatsApp ---
-  const handleSavePhone = async () => {
-    const cleanPhone = tempPhone.replace(/\D/g, "");
-
-    if (cleanPhone.length < 10) {
-      alert("El número es muy corto. Ingresá código de área completo (ej: 54911...).");
-      setTempPhone(user?.whatsapp || "");
-      setIsEditingPhone(false);
-      return;
-    }
-
-    try {
-      const userRef = doc(db, "users", user.uid);
-      await updateDoc(userRef, { whatsapp: cleanPhone });
-      
-      // Actualizamos el contexto global para que se vea el cambio al toque
-      setUser({ ...user, whatsapp: cleanPhone });
-      
-      setIsEditingPhone(false);
-      alert("WhatsApp guardado correctamente.");
-    } catch (error) {
-      console.error(error);
-      alert("Error al guardar en la base de datos.");
-    }
-  };
-
-
-  // al elegir una cancha del select, cargamos sus datos en el form de edición
+  // al elegir una cancha del select, cargamos sus datos en el form de edicion
   const handleSelectCourtToEdit = (courtId) => {
     const court = courts.find((c) => c.id === courtId);
     if (!court) return;
@@ -139,38 +137,41 @@ function OwnerPanel() {
     setEditErrors({});
   };
 
-  // valida que ningún campo del form de edición esté vacío
+  // valida que ningun campo del form de edicion este vacio
   const validateEditForm = () => {
     const errors = {};
     if (!editForm.name.trim()) errors.name = "El nombre no puede estar vacío";
     if (!editForm.price) errors.price = "El precio no puede estar vacío";
     if (!editForm.location.trim()) errors.location = "La ubicación no puede estar vacía";
     setEditErrors(errors);
-    //retorna true si no hay errores
     return Object.keys(errors).length === 0;
   };
 
   // guarda los cambios de la cancha editada en Firestore
-  const handleSaveEdit = async () => {
+  const handleSaveEdit = () => {
     if (!validateEditForm()) return;
-    await updateDoc(doc(db, "courts", courtToEdit.id), {
-      name: editForm.name,
-      sport: editForm.sport,
-      price: Number(editForm.price),
-      location: editForm.location,
+    runSaveEdit(async () => {
+      await updateDoc(doc(db, "courts", courtToEdit.id), {
+        name: editForm.name,
+        sport: editForm.sport,
+        price: Number(editForm.price),
+        location: editForm.location,
+      });
+      setShowEditModal(false);
+      setCourtToEdit(null);
+      fetchMyCourts();
     });
-    setShowEditModal(false);
-    setCourtToEdit(null);
-    fetchMyCourts();
   };
 
   // elimina la cancha de Firestore
-  const handleDeleteCourt = async () => {
+  const handleDeleteCourt = () => {
     if (!window.confirm(`¿Estás seguro que querés eliminar "${courtToEdit.name}"? Esta acción no se puede deshacer.`)) return;
-    await deleteDoc(doc(db, "courts", courtToEdit.id));
-    setShowEditModal(false);
-    setCourtToEdit(null);
-    fetchMyCourts();
+    runDeleteCourt(async () => {
+      await deleteDoc(doc(db, "courts", courtToEdit.id));
+      setShowEditModal(false);
+      setCourtToEdit(null);
+      fetchMyCourts();
+    });
   };
 
   const HORARIOS = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"];
@@ -178,17 +179,16 @@ function OwnerPanel() {
   const sportEmoji = (sport) => ({ futbol: "⚽", padel: "🎾", tenis: "🎾", basquet: "🏀" }[sport] || "🏅");
   const sportLabel = (sport) => ({ futbol: "Fútbol", padel: "Pádel", tenis: "Tenis", basquet: "Básquet" }[sport] || sport);
 
+  // filtra las reservas de la cancha seleccionada por fecha y horario
   const getReservation = (horario) => {
-    let fecha = new Date().toISOString().split("T")[0];
-    const res = confirmedReservations.find(r => r.courtId === selectedCourt?.id && r.startTime === horario && r.date === fecha);
-    const pending_res = pendingReservations.find(r => r.courtId === selectedCourt?.id && r.startTime === horario && r.date === fecha);
-    if (res != null) return res;
-    else if (pending_res != null) return pending_res;
-    else return null;
+    return courtReservations.find(r => r.startTime === horario && r.date === selectedScheduleDate) || null;
   };
 
   const handleCourtClick = (court) => {
     setSelectedCourt(court);
+    setSelectedScheduleDate(today);
+    setCourtReservations([]);
+    fetchCourtReservations(court.id);
     setShowScheduleModal(true);
   };
 
@@ -197,73 +197,13 @@ function OwnerPanel() {
   return (
     <div className="min-h-screen bg-gray-50">
 
-      {/* Navbar */}
-      <nav className="bg-white border-b border-gray-100 sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-2xl">🏟️</span>
-            <span className="font-bold text-gray-900 text-lg">Reservá Tu Cancha</span>
-          </div>
-          <button onClick={handleLogout} className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium px-4 py-2 rounded-lg transition-colors">
-            Salir
-          </button>
-        </div>
-      </nav>
+      <Navbar />
 
       <div className="max-w-5xl mx-auto px-4 py-8">
 
         {/* Header con botones de agregar y editar cancha */}
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Mi panel</h1>
-
-          {/* --- BANNER DE WHATSAPP GENERAL --- */}
-        <div className="mt-4 mb-8 bg-white border border-gray-100 rounded-3xl p-5 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="bg-green-100 p-3 rounded-2xl">
-              <img 
-                src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" 
-                alt="WA" 
-                className="w-7 h-7"
-              />
-            </div>
-            <div>
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">WhatsApp de Contacto General</p>
-              {isEditingPhone ? (
-                <input 
-                  value={tempPhone}
-                  onChange={(e) => setTempPhone(e.target.value)}
-                  placeholder="54911..."
-                  className="text-lg font-bold text-gray-900 border-b-2 border-green-500 outline-none w-full bg-transparent"
-                  autoFocus
-                />
-              ) : (
-                <p className="text-lg font-bold text-gray-900">{user?.whatsapp || "No configurado"}</p>
-              )}
-            </div>
-          </div>
-
-          <div className="flex gap-2 w-full sm:w-auto">
-            {isEditingPhone ? (
-              <>
-                <button onClick={handleSavePhone} className="flex-1 bg-green-500 text-white px-5 py-2 rounded-xl font-bold text-sm hover:bg-green-600 transition-colors">
-                  Guardar
-                </button>
-                <button onClick={() => { setIsEditingPhone(false); setTempPhone(user?.whatsapp || ""); }} className="flex-1 bg-gray-100 text-gray-400 px-5 py-2 rounded-xl font-bold text-sm">
-                  Cancelar
-                </button>
-              </>
-            ) : (
-              <button 
-                onClick={() => { setIsEditingPhone(true); setTempPhone(user?.whatsapp || ""); }} 
-                className="w-full sm:w-auto bg-gray-900 text-white px-5 py-2 rounded-xl font-bold text-sm hover:bg-gray-800 transition-all flex items-center justify-center gap-2"
-              >
-                {user?.whatsapp ? "✏️ Editar número" : "+ Configurar WhatsApp"}
-              </button>
-            )}
-          </div>
-        </div>
-        {/* --- FIN BANNER WSP --- */}
-
           <div className="flex gap-2">
             <button
               onClick={() => { setShowEditModal(true); setCourtToEdit(null); setEditErrors({}); }}
@@ -293,8 +233,12 @@ function OwnerPanel() {
             </select>
             <input placeholder="Precio por hora" type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
             <input placeholder="Ubicación" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} required className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
-            <button type="submit" className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 rounded-xl transition-colors">
-              Guardar cancha
+            <button
+              type="submit"
+              disabled={addingCourt}
+              className="w-full bg-green-500 hover:bg-green-600 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-colors"
+            >
+              {addingCourt ? "Guardando..." : "Guardar cancha"}
             </button>
           </form>
         )}
@@ -326,20 +270,15 @@ function OwnerPanel() {
           </div>
         )}
 
-        {/* Modal de edición de cancha */}
+        {/* Modal de edicion de cancha */}
         {showEditModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl w-full max-w-md">
-
-              {/* Header del modal */}
               <div className="flex items-center justify-between p-6 border-b border-gray-100">
                 <h2 className="font-bold text-gray-900 text-lg">Editar cancha</h2>
                 <button onClick={() => setShowEditModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors">✕</button>
               </div>
-
               <div className="p-6 space-y-4">
-
-                {/* Select para elegir qué cancha editar */}
                 <select
                   onChange={(e) => handleSelectCourtToEdit(e.target.value)}
                   className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
@@ -350,12 +289,8 @@ function OwnerPanel() {
                     <option key={court.id} value={court.id}>{court.name}</option>
                   ))}
                 </select>
-
-                {/* Form de edición — solo visible cuando se seleccionó una cancha */}
                 {courtToEdit && (
                   <div className="space-y-4 pt-2">
-
-                    {/* Campo nombre */}
                     <div>
                       <input
                         placeholder="Nombre de la cancha"
@@ -365,8 +300,6 @@ function OwnerPanel() {
                       />
                       {editErrors.name && <p className="text-red-500 text-xs mt-1">{editErrors.name}</p>}
                     </div>
-
-                    {/* Campo deporte */}
                     <select
                       value={editForm.sport}
                       onChange={(e) => setEditForm({ ...editForm, sport: e.target.value })}
@@ -377,8 +310,6 @@ function OwnerPanel() {
                       <option value="tenis">🎾 Tenis</option>
                       <option value="basquet">🏀 Básquet</option>
                     </select>
-
-                    {/* Campo precio */}
                     <div>
                       <input
                         placeholder="Precio por hora"
@@ -389,8 +320,6 @@ function OwnerPanel() {
                       />
                       {editErrors.price && <p className="text-red-500 text-xs mt-1">{editErrors.price}</p>}
                     </div>
-
-                    {/* Campo ubicación */}
                     <div>
                       <input
                         placeholder="Ubicación"
@@ -400,23 +329,22 @@ function OwnerPanel() {
                       />
                       {editErrors.location && <p className="text-red-500 text-xs mt-1">{editErrors.location}</p>}
                     </div>
-
-                    {/* Botones de guardar y eliminar */}
                     <div className="flex gap-2 pt-2">
                       <button
                         onClick={handleSaveEdit}
-                        className="flex-1 bg-green-500 hover:bg-green-600 text-white font-semibold py-3 rounded-xl transition-colors"
+                        disabled={savingEdit || deletingCourt}
+                        className="flex-1 bg-green-500 hover:bg-green-600 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-colors"
                       >
-                        Guardar cambios
+                        {savingEdit ? "Guardando..." : "Guardar cambios"}
                       </button>
                       <button
                         onClick={handleDeleteCourt}
-                        className="flex-1 bg-red-50 hover:bg-red-100 text-red-500 font-semibold py-3 rounded-xl transition-colors"
+                        disabled={deletingCourt || savingEdit}
+                        className="flex-1 bg-red-50 hover:bg-red-100 disabled:opacity-60 disabled:cursor-not-allowed text-red-500 font-semibold py-3 rounded-xl transition-colors"
                       >
-                        🗑️ Eliminar
+                        {deletingCourt ? "Eliminando..." : "🗑️ Eliminar"}
                       </button>
                     </div>
-
                   </div>
                 )}
               </div>
@@ -424,10 +352,12 @@ function OwnerPanel() {
           </div>
         )}
 
-        {/* Modal de horarios */}
+        {/* Modal de horarios con calendario */}
         {showScheduleModal && selectedCourt && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+
+              {/* Header del modal */}
               <div className="bg-gradient-to-br from-green-400 to-emerald-500 p-6 rounded-t-2xl flex items-center justify-between">
                 <div>
                   <h2 className="font-bold text-white text-xl">{selectedCourt.name}</h2>
@@ -437,22 +367,41 @@ function OwnerPanel() {
                   ✕
                 </button>
               </div>
+
               <div className="p-6">
+
+                {/* Selector de fecha */}
+                <div className="mb-5">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-widest block mb-2">
+                    📅 Selecciona una fecha
+                  </label>
+                  <input
+                    type="date"
+                    value={selectedScheduleDate}
+                    min={today}
+                    onChange={(e) => setSelectedScheduleDate(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                  />
+                </div>
+
+                {/* Leyenda de colores */}
                 <div className="flex items-center gap-4 mb-4 text-xs font-semibold">
                   <span className="bg-green-100 text-green-600 px-2 py-1 rounded-full">🟢 Libre</span>
                   <span className="bg-amber-100 text-amber-600 px-2 py-1 rounded-full">🟡 Pendiente</span>
                   <span className="bg-red-100 text-red-600 px-2 py-1 rounded-full">🔴 Confirmado</span>
                 </div>
+
+                {/* Grilla de horarios */}
                 <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                   {HORARIOS.map((hora) => {
                     const res = getReservation(hora);
-                    const status = res != null ? res.status : null;
+                    const status = res ? res.status : null;
                     return (
                       <button
                         key={hora}
                         className={`py-3 rounded-xl text-sm font-semibold transition-all ${
                           status === "confirmed" ? "bg-red-100 text-red-600"
-                          : status === "pending" ? "bg-amber-100 text-amber-600"
+                          : status === "pending"   ? "bg-amber-100 text-amber-600"
                           : "bg-green-100 text-green-600"
                         }`}
                         onClick={() => { setSelectedReservation(res); setShowReservationModal(true); }}
@@ -483,15 +432,17 @@ function OwnerPanel() {
                     <div className="flex gap-2 mt-4">
                       <button
                         onClick={() => { handleConfirm(selectedReservation.id); setShowReservationModal(false); }}
-                        className="flex-1 bg-green-500 hover:bg-green-600 text-white text-sm font-semibold py-2 rounded-xl transition-colors"
+                        disabled={confirmingRes || rejectingRes}
+                        className="flex-1 bg-green-500 hover:bg-green-600 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-semibold py-2 rounded-xl transition-colors"
                       >
-                        ✅ Confirmar pago
+                        {confirmingRes ? "Confirmando..." : "✅ Confirmar pago"}
                       </button>
                       <button
                         onClick={() => { handleReject(selectedReservation.id); setShowReservationModal(false); }}
-                        className="flex-1 bg-red-50 hover:bg-red-100 text-red-500 text-sm font-semibold py-2 rounded-xl transition-colors"
+                        disabled={rejectingRes || confirmingRes}
+                        className="flex-1 bg-red-50 hover:bg-red-100 disabled:opacity-60 disabled:cursor-not-allowed text-red-500 text-sm font-semibold py-2 rounded-xl transition-colors"
                       >
-                        ❌ Rechazar
+                        {rejectingRes ? "Rechazando..." : "❌ Rechazar"}
                       </button>
                     </div>
                   )}
