@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "crud-react-firestore-a94c5",
     "public": "dist",
     "ignore": [
       "firebase.json",

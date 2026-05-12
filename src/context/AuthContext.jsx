@@ -30,7 +30,8 @@ export function AuthProvider({ children }) {
             name: currentUser.displayName,
             email: currentUser.email,
             role: "client",
-            whatsapp: "" 
+            whatsapp: "",
+            photoURL: currentUser.photoURL || ""
           };
 
           await setDoc(userRef, newUserDoc);

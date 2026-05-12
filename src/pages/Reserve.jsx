@@ -1,18 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { doc, getDoc, collection, addDoc, query, where, getDocs } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
 
+
 const HORARIOS = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00"];
 
 function Reserve() {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
   const { courtId } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [court, setCourt] = useState(null);
   const [date, setDate] = useState("");
-  const [reservedSlots, setReservedSlots] = useState([]);
+  const [reservedSlots, setReservedSlots] = useState({});
   const [loading, setLoading] = useState(true);
   const [success, setSuccess] = useState(false);
 
@@ -31,10 +34,16 @@ function Reserve() {
       collection(db, "reservations"),
       where("courtId", "==", courtId),
       where("date", "==", selectedDate),
-      where("status", "==", "confirmed")
+      where("status", "in", ["confirmed", "pending"])
     );
     const snapshot = await getDocs(q);
-    setReservedSlots(snapshot.docs.map((doc) => doc.data().startTime));
+     //Armamos un objeto
+    const slotsData = {};
+    snapshot.docs.forEach((doc) => {
+      const data = doc.data();
+      slotsData[data.startTime] = data.status;
+    });
+    setReservedSlots(slotsData);
   };
 
   const handleDateChange = (e) => {
@@ -43,28 +52,50 @@ function Reserve() {
     fetchReservedSlots(e.target.value);
   };
 
-  const handleReserve = async (startTime) => {
-    await addDoc(collection(db, "reservations"), {
-      courtId,
-      clientId: user.uid,
-      clientName: user.displayName || user.email,
-      ownerId: court.ownerId,
-      date,
-      startTime,
-      endTime: HORARIOS[HORARIOS.indexOf(startTime) + 1] || "21:00",
-      status: "pending",
-      createdAt: new Date().toISOString(),
-    });
+const handleReserve = async (startTime) => {
+    // Chequeamos la referencia síncrona
+    if (isSubmittingRef.current) return; 
+    
+    // Bloqueamos de forma inmediata
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+    
+    try {
+      // Guardamos la reserva en Firestore
+      await addDoc(collection(db, "reservations"), {
+        courtId,
+        clientId: user.uid,
+        clientName: user.displayName || user.email,
+        ownerId: court.ownerId,
+        date,
+        startTime,
+        endTime: HORARIOS[HORARIOS.indexOf(startTime) + 1] || "21:00",
+        status: "pending",
+        createdAt: new Date().toISOString(),
+      });
 
-    const ownerRef = doc(db, "users", court.ownerId);
-    const ownerSnap = await getDoc(ownerRef);
-    const ownerData = ownerSnap.data();
-    const mensaje = `Hola! Quiero reservar *${court.name}* para el *${date}* a las *${startTime}hs*. Mi nombre es ${user.displayName || user.email}. Quedo esperando el alias para confirmar el pago. ¡Gracias!`;
-    const url = `https://api.whatsapp.com/send?phone=${ownerData.whatsapp}&text=${encodeURIComponent(mensaje)}`;
-    window.open(url, "_blank");
+      // Buscamos el teléfono del dueño
+      const ownerRef = doc(db, "users", court.ownerId);
+      const ownerSnap = await getDoc(ownerRef);
+      const ownerData = ownerSnap.data();
+      
+      // Preparamos y abrimos WhatsApp
+      const mensaje = `Hola! Quiero reservar *${court.name}* para el *${date}* a las *${startTime}hs*. Mi nombre es ${user.displayName || user.email}. Quedo esperando el alias para confirmar el pago. ¡Gracias!`;
+      const url = `https://api.whatsapp.com/send?phone=${ownerData.whatsapp}&text=${encodeURIComponent(mensaje)}`;
+      window.open(url, "_blank");
 
-    setSuccess(true);
-    fetchReservedSlots(date);
+      // Actualizamos el mensaje de éxito y recargamos los horarios
+      setSuccess(true);
+      await fetchReservedSlots(date); 
+
+    } catch (error) {
+      // Mostramos el error por consola
+      console.error("Hubo un error al procesar la reserva:", error);
+    } finally {
+      // Liberamos el bloqueo sólo cuando todo lo anterior terminó
+      isSubmittingRef.current = false;
+      setIsSubmitting(false); 
+    }
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Cargando...</div>;
@@ -122,20 +153,33 @@ function Reserve() {
             <h2 className="font-semibold text-gray-900 mb-4">Horarios disponibles</h2>
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
               {HORARIOS.map((hora) => {
-                const isReserved = reservedSlots.includes(hora);
+                const status = reservedSlots[hora];
+                const isReserved = status === "confirmed" || status === "pending";
+                
+                //Lógica para los colores del botón
+                let btnClass = "bg-green-500 hover:bg-green-600 text-white shadow-sm hover:shadow-md" //El turno se encuentra libre por defecto
+
+                if(status === "confirmed"){
+                  btnClass = "bg-gray-100 text-gray-400 cursor-not-allowed";
+                }else if(status === "pending"){
+                  btnClass = "bg-amber-50 text-amber-600 border-amber-200 cursor-not-allowed";
+                }else if(isSubmitting){
+                  btnClass = "bg-gray-100 text-gray-400 cursor-not-allowed"; //bloqueamos los botones libres mientras se envía
+                }
+
                 return (
                   <button
                     key={hora}
-                    onClick={() => !isReserved && handleReserve(hora)}
-                    disabled={isReserved}
-                    className={`py-3 rounded-xl text-sm font-semibold transition-all ${
-                      isReserved
-                        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                        : "bg-green-500 hover:bg-green-600 text-white shadow-sm hover:shadow-md"
-                    }`}
-                  >
-                    {hora}
-                    {isReserved && <span className="block text-xs font-normal">Ocupado</span>}
+                    onClick={() => !isReserved && !isSubmitting && handleReserve(hora)}
+                    disabled={isReserved || isSubmitting}
+                    className={`py-3 rounded-xl text-sm font-semibold transition-all ${btnClass}`}>
+
+                    <span className="font-semibold block">{hora}</span>
+
+                    {/*textos descriptivos debajo de la hora*/}
+                    {status === "confirmed" && <span className="block text-xs font-normal mt-0.5">Ocupado</span>}
+                    {status === "pending" && <span className="block text-xs font-normal mt-0.5">Pendiente de pago</span>}
+                    {isSubmitting && !isReserved && <span className="block text-xs font normal mt-0.5">Enviando...</span>}
                   </button>
                 );
               })}
