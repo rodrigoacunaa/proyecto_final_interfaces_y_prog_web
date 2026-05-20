@@ -55,20 +55,57 @@ function OwnerPanel() {
   const [form, setForm] = useState({ name: "", sport: "futbol", price: "", location: "" });
 
   const fetchMyCourts = async () => {
+    // Caché de canchas
+    const cachedCourts = sessionStorage.getItem("ownerCourtsCache");
+    if (cachedCourts) {
+      setCourts(JSON.parse(cachedCourts));
+    }
+
+    // Búsqueda en Firebase
     const q = query(collection(db, "courts"), where("ownerId", "==", user.uid));
     const snapshot = await getDocs(q);
-    setCourts(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+    const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+
+    // Actualización si hay cambios
+    if (JSON.stringify(data) !== cachedCourts) {
+      setCourts(data);
+      sessionStorage.setItem("ownerCourtsCache", JSON.stringify(data));
+    }
   };
 
   const fetchReservations = async () => {
+    // Caché de reservas
+    const cachedRes = sessionStorage.getItem("ownerReservationsCache");
+    if (cachedRes) {
+      const { pending, confirmed } = JSON.parse(cachedRes);
+      setPendingReservations(pending);
+      setConfirmedReservations(confirmed);
+      setLoading(false); // Apagamos el loading instantáneamente
+    }
+
+    // Búsqueda en Firebase para el día actual
     let fecha = new Date().toISOString().split("T")[0];
-    const [pendingSnap, confirmedSnap] = await Promise.all([
-      getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "pending"), where("date", "==", fecha))),
-      getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "confirmed"), where("date", "==", fecha))),
-    ]);
-    setPendingReservations(pendingSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
-    setConfirmedReservations(confirmedSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
-    setLoading(false);
+    try {
+      const [pendingSnap, confirmedSnap] = await Promise.all([
+        getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "pending"), where("date", "==", fecha))),
+        getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "confirmed"), where("date", "==", fecha))),
+      ]);
+
+      const pendingData = pendingSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const confirmedData = confirmedSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const freshData = { pending: pendingData, confirmed: confirmedData };
+
+      // Actualización visual y de caché si hubo nuevas reservas o cambios de estado
+      if (JSON.stringify(freshData) !== cachedRes) {
+        setPendingReservations(pendingData);
+        setConfirmedReservations(confirmedData);
+        sessionStorage.setItem("ownerReservationsCache", JSON.stringify(freshData));
+      }
+    } catch (error) {
+      console.error("Error al traer las reservas del dueño:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
