@@ -13,11 +13,32 @@ function Home() {
 
   useEffect(() => {
     const fetchCourts = async () => {
-      const q = query(collection(db, "courts"), where("available", "==", true));
-      const snapshot = await getDocs(q);
-      const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      setCourts(data);
-      setLoading(false);
+      //comprobamos caché local primeramente
+      const cachedCourts = sessionStorage.getItem("courtsCache");
+      if(cachedCourts){
+        setCourts(JSON.parse(cachedCourts));
+
+        setLoading(false); // off loading porque tenemos al instante los datos
+      }
+
+      //revisamos cambios en firebase
+      try{
+        const q = query(collection(db, "courts"), where("available","==", true));
+        const snapshot = await getDocs(q);
+        const data = snapshot.docs.map((doc)=>({id: doc.id, ...doc.data()}));
+
+        //comparamos si existen cambios antes de forzar el renderizado
+        if(JSON.stringify(data)!== cachedCourts){
+          setCourts(data);
+          // actualizamos nuestra caché para la proxima vez
+          sessionStorage.setItem("courtsCache", JSON.stringify(data));
+        }
+      } catch (error){
+        console.error("Error obteniendo canchas de Firebase: ",error);
+      } finally {
+        // si es la primera vez que se entra y no había caché
+        setLoading(false);
+      }
     };
     fetchCourts();
   }, []);

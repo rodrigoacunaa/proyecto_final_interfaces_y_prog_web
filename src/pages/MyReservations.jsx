@@ -13,20 +13,46 @@ function MyReservations() {
   const [loading, setLoading] = useState(true);
 
   const fetchReservations = async () => {
-    const q = query(collection(db, "reservations"), where("clientId", "==", user.uid));
-    const snapshot = await getDocs(q);
-    const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    //Intentamos levantar las reservar y sus canchas de la caché
+    const cachedData = sessionStorage.getItem("myReservationsCache");
 
-    const courtIds = [...new Set(data.map((r) => r.courtId))];
-    const courtData = {};
-    for (const courtId of courtIds) {
-      const courtSnap = await getDocs(query(collection(db, "courts"), where("__name__", "==", courtId)));
-      courtSnap.docs.forEach((d) => { courtData[d.id] = d.data(); });
+    if(cachedData){
+      const {reservations: cachedRes, courts: cachedCourts } = JSON.parse(cachedData);
+      setReservations(cachedRes);
+      setCourts(cachedCourts);
+      setLoading(false); // loading en off porque ya detectamos datos visibles
     }
 
-    setCourts(courtData);
-    setReservations(data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
-    setLoading(false);
+    try{
+      //Traemos los datos frescos de Firebase en segundo plano
+      const q = query(collection(db, "reservations"),where("clientId", "==", user.uid));
+      const snapshot = await getDocs(q);
+      const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+
+      const courtIds = [...new Set(data.map((r) => r.courtId))];
+      const courtData = {};
+      for (const courtId of courtIds) {
+        const courtSnap = await getDocs(query(collection(db, "courts"), where("__name__", "==", courtId)));
+        courtSnap.docs.forEach((d) => { courtData[d.id] = d.data(); });
+    }
+
+    const sortedReservations = data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const freshCachePayload = { reservations: sortedReservations, courts: courtData };
+
+    //Comparamos con la caché, si algo cambió, actualizamos
+    if (JSON.stringify(freshCachePayload) !== cachedData) {
+        setReservations(sortedReservations);
+        setCourts(courtData);
+        // Guardamos la nueva foto de los datos en la caché
+        sessionStorage.setItem("myReservationsCache", JSON.stringify(freshCachePayload));
+      }
+    
+    } catch(error){
+      console.error("Error al traer las reservas de Firebase: ",error);
+    } finally {
+      setLoading(false); // Por si es la primera vez que entra y no había caché previa
+    }
+
   };
 
   useEffect(() => { fetchReservations(); }, []);
