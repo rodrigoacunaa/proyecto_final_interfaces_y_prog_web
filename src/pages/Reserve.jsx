@@ -1,15 +1,15 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { doc, getDoc, collection, addDoc, query, where, getDocs } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
-
+import Navbar from "../components/Navbar";
+import { useAsyncAction } from "../hooks/useAsyncAction";
 
 const HORARIOS = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00"];
 
 function Reserve() {
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const isSubmittingRef = useRef(false);
+  const { run: runReserve, loading: isSubmitting } = useAsyncAction();
   const { courtId } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -37,7 +37,6 @@ function Reserve() {
       where("status", "in", ["confirmed", "pending"])
     );
     const snapshot = await getDocs(q);
-     //Armamos un objeto
     const slotsData = {};
     snapshot.docs.forEach((doc) => {
       const data = doc.data();
@@ -52,16 +51,8 @@ function Reserve() {
     fetchReservedSlots(e.target.value);
   };
 
-const handleReserve = async (startTime) => {
-    // Chequeamos la referencia síncrona
-    if (isSubmittingRef.current) return; 
-    
-    // Bloqueamos de forma inmediata
-    isSubmittingRef.current = true;
-    setIsSubmitting(true);
-    
-    try {
-      // Guardamos la reserva en Firestore
+  const handleReserve = (startTime) => {
+    runReserve(async () => {
       await addDoc(collection(db, "reservations"), {
         courtId,
         clientId: user.uid,
@@ -74,28 +65,17 @@ const handleReserve = async (startTime) => {
         createdAt: new Date().toISOString(),
       });
 
-      // Buscamos el teléfono del dueño
       const ownerRef = doc(db, "users", court.ownerId);
       const ownerSnap = await getDoc(ownerRef);
       const ownerData = ownerSnap.data();
-      
-      // Preparamos y abrimos WhatsApp
+
       const mensaje = `Hola! Quiero reservar *${court.name}* para el *${date}* a las *${startTime}hs*. Mi nombre es ${user.displayName || user.email}. Quedo esperando el alias para confirmar el pago. ¡Gracias!`;
       const url = `https://api.whatsapp.com/send?phone=${ownerData.whatsapp}&text=${encodeURIComponent(mensaje)}`;
       window.open(url, "_blank");
 
-      // Actualizamos el mensaje de éxito y recargamos los horarios
       setSuccess(true);
-      await fetchReservedSlots(date); 
-
-    } catch (error) {
-      // Mostramos el error por consola
-      console.error("Hubo un error al procesar la reserva:", error);
-    } finally {
-      // Liberamos el bloqueo sólo cuando todo lo anterior terminó
-      isSubmittingRef.current = false;
-      setIsSubmitting(false); 
-    }
+      await fetchReservedSlots(date);
+    });
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Cargando...</div>;
@@ -104,15 +84,7 @@ const handleReserve = async (startTime) => {
   return (
     <div className="min-h-screen bg-gray-50">
 
-      {/* Navbar */}
-      <nav className="bg-white border-b border-gray-100 sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
-          <button onClick={() => navigate("/")} className="flex items-center gap-2 text-gray-600 hover:text-green-600 font-medium transition-colors">
-            ← Volver
-          </button>
-          <span className="font-bold text-gray-900">Reservá Tu Cancha ⚽</span>
-        </div>
-      </nav>
+      <Navbar backTo="/" backLabel="Canchas" />
 
       <div className="max-w-2xl mx-auto px-4 py-8">
 
@@ -155,16 +127,14 @@ const handleReserve = async (startTime) => {
               {HORARIOS.map((hora) => {
                 const status = reservedSlots[hora];
                 const isReserved = status === "confirmed" || status === "pending";
-                
-                //Lógica para los colores del botón
-                let btnClass = "bg-green-500 hover:bg-green-600 text-white shadow-sm hover:shadow-md" //El turno se encuentra libre por defecto
 
-                if(status === "confirmed"){
+                let btnClass = "bg-green-500 hover:bg-green-600 text-white shadow-sm hover:shadow-md";
+                if (status === "confirmed") {
                   btnClass = "bg-gray-100 text-gray-400 cursor-not-allowed";
-                }else if(status === "pending"){
-                  btnClass = "bg-amber-50 text-amber-600 border-amber-200 cursor-not-allowed";
-                }else if(isSubmitting){
-                  btnClass = "bg-gray-100 text-gray-400 cursor-not-allowed"; //bloqueamos los botones libres mientras se envía
+                } else if (status === "pending") {
+                  btnClass = "bg-amber-50 text-amber-600 border border-amber-200 cursor-not-allowed";
+                } else if (isSubmitting) {
+                  btnClass = "bg-gray-100 text-gray-400 cursor-not-allowed";
                 }
 
                 return (
@@ -172,14 +142,12 @@ const handleReserve = async (startTime) => {
                     key={hora}
                     onClick={() => !isReserved && !isSubmitting && handleReserve(hora)}
                     disabled={isReserved || isSubmitting}
-                    className={`py-3 rounded-xl text-sm font-semibold transition-all ${btnClass}`}>
-
+                    className={`py-3 rounded-xl text-sm font-semibold transition-all ${btnClass}`}
+                  >
                     <span className="font-semibold block">{hora}</span>
-
-                    {/*textos descriptivos debajo de la hora*/}
                     {status === "confirmed" && <span className="block text-xs font-normal mt-0.5">Ocupado</span>}
                     {status === "pending" && <span className="block text-xs font-normal mt-0.5">Pendiente de pago</span>}
-                    {isSubmitting && !isReserved && <span className="block text-xs font normal mt-0.5">Enviando...</span>}
+                    {isSubmitting && !isReserved && <span className="block text-xs font-normal mt-0.5">Enviando...</span>}
                   </button>
                 );
               })}

@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { collection, query, where, getDocs, doc, updateDoc } from "firebase/firestore";
-import { db, auth } from "../firebase/config";
+import { db } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { signOut } from "firebase/auth";
+import Navbar from "../components/Navbar";
 
 function MyReservations() {
   const { user } = useAuth();
@@ -74,23 +74,7 @@ function MyReservations() {
   return (
     <div className="min-h-screen bg-gray-50">
 
-      {/* Navbar */}
-      <nav className="bg-white border-b border-gray-100 sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-2xl">⚽</span>
-            <span className="font-bold text-gray-900 text-lg">Reservá Tu Cancha</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => navigate("/")} className="text-sm text-gray-600 hover:text-green-600 font-medium px-3 py-2 rounded-lg hover:bg-green-50 transition-colors">
-              ← Volver
-            </button>
-            <button onClick={() => { signOut(auth); navigate("/login"); }} className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium px-4 py-2 rounded-lg transition-colors">
-              Salir
-            </button>
-          </div>
-        </div>
-      </nav>
+      <Navbar backTo="/" backLabel="Inicio" />
 
       <div className="max-w-2xl mx-auto px-4 py-8">
 

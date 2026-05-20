@@ -39,11 +39,11 @@ export function AuthProvider({ children }) {
           setUser({ ...currentUser, ...newUserDoc });
         }
       } else {
-        // Si no hay sesión activa
+        // Si no hay sesion activa
         setUser(null);
         setUserRole(null);
       }
-      // Movimos el loading acá para que termine solo después de procesar todo
+      // Movimos el loading aca para que termine solo despues de procesar todo
       setLoading(false);
     });
     return () => unsubscribe();

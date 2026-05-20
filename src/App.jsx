@@ -23,7 +23,7 @@ function OwnerRoute({ children }) {
   return children;
 }
 
-// redirige según el rol al entrar a la raíz
+// redirige segun el rol al entrar a la raiz
 function RootRoute({ children }) {
   const { user, userRole } = useAuth();
   if (!user) return <Navigate to="/login" />;
