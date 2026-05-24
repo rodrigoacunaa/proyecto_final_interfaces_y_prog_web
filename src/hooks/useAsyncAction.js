@@ -13,19 +13,23 @@ import { useRef, useState } from "react";
 export function useAsyncAction() {
   const inFlight = useRef(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   const run = async (fn) => {
     // El ref bloquea de forma sincrona antes de cualquier re-render
     if (inFlight.current) return;
     inFlight.current = true;
     setLoading(true);
+    setError(null);
     try {
       await fn();
+    } catch (err) {
+      setError(err?.message || "Ocurrió un error inesperado. Intentá de nuevo.");
     } finally {
       inFlight.current = false;
       setLoading(false);
     }
   };
 
-  return { run, loading };
+  return { run, loading, error };
 }

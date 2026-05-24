@@ -5,6 +5,7 @@ import Home from "./pages/Home";
 import OwnerPanel from "./pages/OwnerPanel";
 import Reserve from "./pages/Reserve";
 import MyReservations from "./pages/MyReservations";
+import NotFound from "./pages/NotFound";
 
 function PrivateRoute({ children }) {
   const { user } = useAuth();
@@ -51,6 +52,7 @@ function App() {
         <Route path="/my-reservations" element={
           <PrivateRoute><MyReservations /></PrivateRoute>
         } />
+        <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
   );

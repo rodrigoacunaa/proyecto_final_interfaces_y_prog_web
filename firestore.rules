@@ -1,0 +1,54 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Usuarios: cada uno solo puede leer/editar su propio doc.
+    // El campo "role" nunca puede ser modificado por el propio usuario.
+    match /users/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null
+                    && request.auth.uid == userId
+                    && !request.resource.data.diff(resource.data)
+                        .affectedKeys().hasAny(['role']);
+    }
+
+    // Canchas: cualquier usuario autenticado puede leer.
+    // Solo owners/superadmins pueden crear, y solo la suya propia.
+    // Solo el dueño puede editar o eliminar su cancha.
+    match /courts/{courtId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+                    && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+                       in ['owner', 'superadmin']
+                    && request.resource.data.ownerId == request.auth.uid;
+      allow update: if request.auth != null
+                    && resource.data.ownerId == request.auth.uid;
+      allow delete: if request.auth != null
+                    && resource.data.ownerId == request.auth.uid;
+    }
+
+    // Reservas: cualquier usuario autenticado puede leer (necesario para
+    // mostrar disponibilidad de horarios en Reserve.jsx).
+    // Solo el cliente puede crear una reserva con su propio uid,
+    // y no puede reservar su propia cancha.
+    // El owner puede confirmar/cancelar. El cliente solo puede cancelar
+    // sus propias reservas pendientes, sin tocar otros campos.
+    match /reservations/{resId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+                    && request.resource.data.clientId == request.auth.uid
+                    && request.resource.data.clientId != request.resource.data.ownerId;
+      allow update: if request.auth != null
+                    && (
+                      resource.data.ownerId == request.auth.uid
+                      || (resource.data.clientId == request.auth.uid
+                          && resource.data.status == 'pending'
+                          && request.resource.data.status == 'cancelled'
+                          && request.resource.data.diff(resource.data)
+                              .affectedKeys().hasOnly(['status']))
+                    );
+    }
+
+  }
+}

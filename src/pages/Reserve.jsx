@@ -9,13 +9,14 @@ import { useAsyncAction } from "../hooks/useAsyncAction";
 const HORARIOS = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00"];
 
 function Reserve() {
-  const { run: runReserve, loading: isSubmitting } = useAsyncAction();
+  const { run: runReserve, loading: isSubmitting, error: reserveError } = useAsyncAction();
   const { courtId } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [court, setCourt] = useState(null);
   const [date, setDate] = useState("");
   const [reservedSlots, setReservedSlots] = useState({});
+  const [ownerWhatsapp, setOwnerWhatsapp] = useState(null);
   const [loading, setLoading] = useState(true);
   const [success, setSuccess] = useState(false);
 
@@ -23,7 +24,17 @@ function Reserve() {
     const fetchCourt = async () => {
       const docRef = doc(db, "courts", courtId);
       const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) setCourt({ id: docSnap.id, ...docSnap.data() });
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.ownerId === user.uid) { navigate("/"); return; }
+        // Pre-fetching owner data here fixes two issues:
+        // 1. ownerSnap.exists() guard prevents null-deref crash
+        // 2. Storing whatsapp in state lets window.open fire synchronously
+        //    in handleReserve (before any await), bypassing popup blockers
+        const ownerSnap = await getDoc(doc(db, "users", data.ownerId));
+        setOwnerWhatsapp(ownerSnap.exists() ? ownerSnap.data().whatsapp || null : null);
+        setCourt({ id: docSnap.id, ...data });
+      }
       setLoading(false);
     };
     fetchCourt();
@@ -52,6 +63,12 @@ function Reserve() {
   };
 
   const handleReserve = (startTime) => {
+    const mensaje = `Hola! Quiero reservar *${court.name}* para el *${date}* a las *${startTime}hs*. Mi nombre es ${user.displayName || user.email}. Quedo esperando el alias para confirmar el pago. ¡Gracias!`;
+    const url = `https://api.whatsapp.com/send?phone=${ownerWhatsapp}&text=${encodeURIComponent(mensaje)}`;
+    // window.open antes de cualquier await para mantener el contexto de gesto
+    // del usuario — los bloqueadores de popups lo bloquean si se llama post-await
+    window.open(url, "_blank");
+
     runReserve(async () => {
       await addDoc(collection(db, "reservations"), {
         courtId,
@@ -64,15 +81,6 @@ function Reserve() {
         status: "pending",
         createdAt: new Date().toISOString(),
       });
-
-      const ownerRef = doc(db, "users", court.ownerId);
-      const ownerSnap = await getDoc(ownerRef);
-      const ownerData = ownerSnap.data();
-
-      const mensaje = `Hola! Quiero reservar *${court.name}* para el *${date}* a las *${startTime}hs*. Mi nombre es ${user.displayName || user.email}. Quedo esperando el alias para confirmar el pago. ¡Gracias!`;
-      const url = `https://api.whatsapp.com/send?phone=${ownerData.whatsapp}&text=${encodeURIComponent(mensaje)}`;
-      window.open(url, "_blank");
-
       setSuccess(true);
       await fetchReservedSlots(date);
     });
@@ -119,8 +127,22 @@ function Reserve() {
           </div>
         )}
 
+        {/* Error de Firestore u otro error inesperado */}
+        {reserveError && (
+          <div className="bg-red-50 border border-red-200 text-red-700 rounded-2xl px-5 py-4 mb-6 text-sm">
+            ❌ {reserveError}
+          </div>
+        )}
+
+        {/* Aviso si el dueño no tiene WhatsApp configurado */}
+        {!ownerWhatsapp && !loading && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-700 rounded-2xl px-5 py-4 mb-6 text-sm">
+            ⚠️ El dueño aún no configuró su WhatsApp de contacto. No podés reservar hasta que lo haga.
+          </div>
+        )}
+
         {/* Horarios */}
-        {date && (
+        {date && ownerWhatsapp && (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
             <h2 className="font-semibold text-gray-900 mb-4">Horarios disponibles</h2>
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
