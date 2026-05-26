@@ -1,101 +1,109 @@
+// useState para manejar todos los estados del panel, useEffect para cargar datos al montar
 import { useState, useEffect } from "react";
+// Funciones de Firestore para leer, crear, actualizar y eliminar canchas y reservas
 import { collection, addDoc, getDocs, query, where, doc, updateDoc, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
+// Hook que protege acciones async contra doble-submit usando un ref de bloqueo sincronico
 import { useAsyncAction } from "../hooks/useAsyncAction";
 
 function OwnerPanel() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
+  // Una instancia de useAsyncAction por cada accion critica para que sus estados de loading sean independientes
+  // y no se bloqueen entre si (ej: guardar edicion no bloquea el boton de agregar cancha)
   const { run: runAddCourt,    loading: addingCourt    } = useAsyncAction();
   const { run: runSaveEdit,    loading: savingEdit     } = useAsyncAction();
   const { run: runDeleteCourt, loading: deletingCourt  } = useAsyncAction();
   const { run: runConfirm,     loading: confirmingRes  } = useAsyncAction();
   const { run: runReject,      loading: rejectingRes   } = useAsyncAction();
 
-  //canchas del dueno
+  // canchas del dueno logueado
   const [courts, setCourts] = useState([]);
 
-  //reservas pendientes del dia (para el panel principal)
+  // reservas pendientes del dia de hoy (panel principal)
   const [pendingReservations, setPendingReservations] = useState([]);
 
-  //reservas confirmadas del dia (para el panel principal)
+  // reservas confirmadas del dia de hoy (panel principal)
   const [confirmedReservations, setConfirmedReservations] = useState([]);
 
-  //todas las reservas de la cancha seleccionada (para el modal de horarios)
+  // todas las reservas activas de la cancha seleccionada (para el modal de horarios)
   const [courtReservations, setCourtReservations] = useState([]);
 
-  //fecha seleccionada en el modal de horarios (default hoy)
+  // fecha seleccionada en el modal de horarios, inicializada en hoy
   const today = new Date().toISOString().split("T")[0];
   const [selectedScheduleDate, setSelectedScheduleDate] = useState(today);
 
   const [loading, setLoading] = useState(true);
 
-  //controla visibilidad del form de nueva cancha
+  // controla visibilidad del formulario de nueva cancha
   const [showForm, setShowForm] = useState(false);
 
-  //cancha seleccionada para ver sus horarios
+  // cancha seleccionada para ver sus horarios en el modal
   const [selectedCourt, setSelectedCourt] = useState(null);
 
-  //controla visibilidad del modal de horarios
+  // controla visibilidad del modal de horarios
   const [showScheduleModal, setShowScheduleModal] = useState(false);
 
-  //controla visibilidad del modal de detalle de reserva
+  // controla visibilidad del modal de detalle de reserva
   const [showReservationModal, setShowReservationModal] = useState(false);
 
-  //reserva seleccionada al clickear un horario
+  // reserva seleccionada al hacer click en un horario del calendario
   const [selectedReservation, setSelectedReservation] = useState(null);
 
-  //controla visibilidad del modal de edicion de cancha
+  // controla visibilidad del modal de edicion de cancha
   const [showEditModal, setShowEditModal] = useState(false);
 
-  //cancha siendo editada actualmente
+  // cancha que se esta editando actualmente
   const [courtToEdit, setCourtToEdit] = useState(null);
 
-  //valores del form de edicion — se inicializan al seleccionar una cancha
+  // valores del formulario de edicion — se cargan al seleccionar una cancha del select
   const [editForm, setEditForm] = useState({ name: "", sport: "futbol", price: "", location: "" });
 
-  //errores de validacion del form de edicion
+  // errores de validacion del formulario de edicion por campo
   const [editErrors, setEditErrors] = useState({});
 
-  //valores del form de nueva cancha
+  // valores del formulario de nueva cancha
   const [form, setForm] = useState({ name: "", sport: "futbol", price: "", location: "" });
 
+  // Patron SWR: muestra cache local al instante y luego consulta Firebase en segundo plano
   const fetchMyCourts = async () => {
-    // Caché de canchas
+    // cargamos desde cache de sesion para respuesta inmediata
     const cachedCourts = sessionStorage.getItem("ownerCourtsCache");
     if (cachedCourts) {
       setCourts(JSON.parse(cachedCourts));
     }
 
-    // Búsqueda en Firebase
+    // consultamos Firebase para obtener la lista actualizada
     const q = query(collection(db, "courts"), where("ownerId", "==", user.uid));
     const snapshot = await getDocs(q);
     const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
-    // Actualización si hay cambios
+    // actualizamos estado y cache solo si los datos cambiaron para evitar renders innecesarios
     if (JSON.stringify(data) !== cachedCourts) {
       setCourts(data);
       sessionStorage.setItem("ownerCourtsCache", JSON.stringify(data));
     }
   };
 
+  // Trae reservas pendientes y confirmadas del dia actual usando Promise.all para hacer ambas consultas en paralelo
   const fetchReservations = async () => {
-    // Caché de reservas
+    // mostramos datos de cache para no bloquear la UI mientras llega Firebase
     const cachedRes = sessionStorage.getItem("ownerReservationsCache");
     if (cachedRes) {
       const { pending, confirmed } = JSON.parse(cachedRes);
       setPendingReservations(pending);
       setConfirmedReservations(confirmed);
-      setLoading(false); // Apagamos el loading instantáneamente
+      setLoading(false); // apagamos el loading de inmediato porque ya tenemos datos visibles
     }
 
-    // Búsqueda en Firebase para el día actual
+    // filtramos por la fecha de hoy directamente en Firestore para no traer reservas de otros dias
     const fecha = new Date().toISOString().split("T")[0];
     try {
+      // ejecutamos ambas consultas en paralelo para reducir el tiempo total de carga
       const [pendingSnap, confirmedSnap] = await Promise.all([
         getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "pending"), where("date", "==", fecha))),
         getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "confirmed"), where("date", "==", fecha))),
@@ -105,22 +113,22 @@ function OwnerPanel() {
       const confirmedData = confirmedSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
       const freshData = { pending: pendingData, confirmed: confirmedData };
 
-      // Actualización visual y de caché si hubo nuevas reservas o cambios de estado
+      // actualizamos estado y cache solo si hay cambios para evitar renders innecesarios
       if (JSON.stringify(freshData) !== cachedRes) {
         setPendingReservations(pendingData);
         setConfirmedReservations(confirmedData);
         sessionStorage.setItem("ownerReservationsCache", JSON.stringify(freshData));
       }
     } catch (error) {
-      console.error("Error al traer las reservas del dueño:", error);
+      console.error("Error al traer las reservas del dueno:", error);
     } finally {
       setLoading(false);
     }
 
   };
 
-  //fetches reservas activas de una cancha — filtra fechas client-side para evitar
-  //indices compuestos en Firestore (in + >= en campos distintos falla sin indice)
+  // Trae las reservas activas de una cancha filtrando fechas client-side para evitar indices compuestos
+  // en Firestore (combinar "in" con ">=" en campos distintos requeriria un indice compuesto)
   const fetchCourtReservations = async (courtId) => {
     const q = query(
       collection(db, "reservations"),
@@ -129,10 +137,11 @@ function OwnerPanel() {
     );
     const snapshot = await getDocs(q);
     const all = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-    //filtramos client-side para mostrar solo desde hoy en adelante
+    // filtramos desde hoy en adelante client-side para mostrar solo reservas futuras o del dia
     setCourtReservations(all.filter((r) => r.date >= today));
   };
 
+  // carga canchas y reservas al montar el componente, y cada vez que cambia el usuario
   useEffect(() => {
     if (user) {
       fetchMyCourts();
@@ -140,22 +149,27 @@ function OwnerPanel() {
     }
   }, [user]);
 
+  // Confirma una reserva en Firestore y aplica actualizacion optimista en el estado local
+  // para que la UI refleje el cambio sin esperar el round-trip del refetch
   const handleConfirm = (id) => runConfirm(async () => {
     await updateDoc(doc(db, "reservations", id), { status: "confirmed" });
-    //actualizacion optimista: cambia el estado local sin esperar un nuevo fetch
+    // actualizacion optimista: cambia el estado en el calendario de inmediato
     setCourtReservations(prev => prev.map(r => r.id === id ? { ...r, status: "confirmed" } : r));
+    // la quita de la lista de pendientes sin esperar el refetch
     setPendingReservations(prev => prev.filter(r => r.id !== id));
     fetchReservations();
   });
 
+  // Rechaza una reserva en Firestore y la elimina del estado local de forma optimista
   const handleReject = (id) => runReject(async () => {
     await updateDoc(doc(db, "reservations", id), { status: "cancelled" });
-    //actualizacion optimista: elimina la reserva del estado local de inmediato
+    // actualizacion optimista: elimina la reserva del calendario y de la lista de pendientes
     setCourtReservations(prev => prev.filter(r => r.id !== id));
     setPendingReservations(prev => prev.filter(r => r.id !== id));
     fetchReservations();
   });
 
+  // Agrega una nueva cancha a Firestore con el precio convertido a numero y el ownerId del usuario actual
   const handleSubmit = (e) => {
     e.preventDefault();
     runAddCourt(async () => {
@@ -166,7 +180,7 @@ function OwnerPanel() {
     });
   };
 
-  // al elegir una cancha del select, cargamos sus datos en el form de edicion
+  // Al seleccionar una cancha del select, carga sus datos actuales en el formulario de edicion
   const handleSelectCourtToEdit = (courtId) => {
     const court = courts.find((c) => c.id === courtId);
     if (!court) return;
@@ -175,7 +189,7 @@ function OwnerPanel() {
     setEditErrors({});
   };
 
-  // valida que ningun campo del form de edicion este vacio
+  // Valida que ningun campo obligatorio del formulario de edicion este vacio antes de guardar
   const validateEditForm = () => {
     const errors = {};
     if (!editForm.name.trim()) errors.name = "El nombre no puede estar vacío";
@@ -185,7 +199,7 @@ function OwnerPanel() {
     return Object.keys(errors).length === 0;
   };
 
-  // guarda los cambios de la cancha editada en Firestore
+  // Guarda los cambios de la cancha editada en Firestore, convirtiendo el precio a numero
   const handleSaveEdit = () => {
     if (!validateEditForm()) return;
     runSaveEdit(async () => {
@@ -201,7 +215,7 @@ function OwnerPanel() {
     });
   };
 
-  // elimina la cancha de Firestore
+  // Elimina la cancha de Firestore, pide confirmacion previa para evitar borrados accidentales
   const handleDeleteCourt = () => {
     if (!window.confirm(`¿Estás seguro que querés eliminar "${courtToEdit.name}"? Esta acción no se puede deshacer.`)) return;
     runDeleteCourt(async () => {
@@ -212,16 +226,19 @@ function OwnerPanel() {
     });
   };
 
+  // Franja horaria disponible para reservas, de 9 a 23hs con bloques de 1 hora
   const HORARIOS = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"];
 
+  // Utilidades para mostrar emoji y etiqueta legible segun el deporte de la cancha
   const sportEmoji = (sport) => ({ futbol: "⚽", padel: "🎾", tenis: "🎾", basquet: "🏀" }[sport] || "🏅");
   const sportLabel = (sport) => ({ futbol: "Fútbol", padel: "Pádel", tenis: "Tenis", basquet: "Básquet" }[sport] || sport);
 
-  // filtra las reservas de la cancha seleccionada por fecha y horario
+  // Busca si existe una reserva activa para un horario y fecha especificos en el calendario
   const getReservation = (horario) => {
     return courtReservations.find(r => r.startTime === horario && r.date === selectedScheduleDate) || null;
   };
 
+  // Al hacer click en una cancha, limpia el estado previo del modal y carga las reservas de esa cancha
   const handleCourtClick = (court) => {
     setSelectedCourt(court);
     setSelectedScheduleDate(today);
@@ -230,6 +247,7 @@ function OwnerPanel() {
     setShowScheduleModal(true);
   };
 
+  // Pantalla de carga inicial — solo aparece si no habia datos en cache al montar
   if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Cargando...</div>;
 
   return (
@@ -239,7 +257,7 @@ function OwnerPanel() {
 
       <div className="max-w-5xl mx-auto px-4 py-8">
 
-        {/* Header con botones de agregar y editar cancha */}
+        {/* Header con acciones rapidas para agregar y editar canchas */}
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Mi panel</h1>
           <div className="flex gap-2">
@@ -258,7 +276,7 @@ function OwnerPanel() {
           </div>
         </div>
 
-        {/* Form de nueva cancha */}
+        {/* Formulario de nueva cancha — se muestra u oculta con el boton de arriba */}
         {showForm && (
           <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-6 space-y-4">
             <h2 className="font-semibold text-gray-900">Nueva cancha</h2>
@@ -271,6 +289,7 @@ function OwnerPanel() {
             </select>
             <input placeholder="Precio por hora" type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
             <input placeholder="Ubicación" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} required className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
+            {/* El boton se deshabilita mientras addingCourt es true para evitar doble submit */}
             <button
               type="submit"
               disabled={addingCourt}
@@ -281,7 +300,7 @@ function OwnerPanel() {
           </form>
         )}
 
-        {/* Cards de canchas */}
+        {/* Grid de cards de canchas — cada card abre el modal de horarios al hacer click */}
         {courts.length === 0 ? (
           <div className="text-center py-20 text-gray-400">Todavía no tenés canchas cargadas.</div>
         ) : (
@@ -308,7 +327,7 @@ function OwnerPanel() {
           </div>
         )}
 
-        {/* Modal de edicion de cancha */}
+        {/* Modal de edicion de cancha: permite seleccionar, editar y eliminar una cancha del dueno */}
         {showEditModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl w-full max-w-md">
@@ -317,6 +336,7 @@ function OwnerPanel() {
                 <button onClick={() => setShowEditModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors">✕</button>
               </div>
               <div className="p-6 space-y-4">
+                {/* Select para elegir cual cancha editar — al cambiar carga sus datos en el form */}
                 <select
                   onChange={(e) => handleSelectCourtToEdit(e.target.value)}
                   className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
@@ -327,6 +347,7 @@ function OwnerPanel() {
                     <option key={court.id} value={court.id}>{court.name}</option>
                   ))}
                 </select>
+                {/* Formulario de edicion — solo aparece cuando hay una cancha seleccionada */}
                 {courtToEdit && (
                   <div className="space-y-4 pt-2">
                     <div>
@@ -367,6 +388,7 @@ function OwnerPanel() {
                       />
                       {editErrors.location && <p className="text-red-500 text-xs mt-1">{editErrors.location}</p>}
                     </div>
+                    {/* Ambos botones se deshabilitan mutuamente para evitar acciones simultaneas */}
                     <div className="flex gap-2 pt-2">
                       <button
                         onClick={handleSaveEdit}
@@ -390,12 +412,12 @@ function OwnerPanel() {
           </div>
         )}
 
-        {/* Modal de horarios con calendario */}
+        {/* Modal de horarios: muestra el calendario de una cancha con sus reservas por fecha */}
         {showScheduleModal && selectedCourt && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
 
-              {/* Header del modal */}
+              {/* Header del modal con nombre y ubicacion de la cancha seleccionada */}
               <div className="bg-gradient-to-br from-green-400 to-emerald-500 p-6 rounded-t-2xl flex items-center justify-between">
                 <div>
                   <h2 className="font-bold text-white text-xl">{selectedCourt.name}</h2>
@@ -408,7 +430,7 @@ function OwnerPanel() {
 
               <div className="p-6">
 
-                {/* Selector de fecha */}
+                {/* Selector de fecha — solo permite fechas desde hoy en adelante */}
                 <div className="mb-5">
                   <label className="text-xs font-bold text-gray-400 uppercase tracking-widest block mb-2">
                     📅 Selecciona una fecha
@@ -422,19 +444,20 @@ function OwnerPanel() {
                   />
                 </div>
 
-                {/* Leyenda de colores */}
+                {/* Leyenda de colores para interpretar el estado de cada horario */}
                 <div className="flex items-center gap-4 mb-4 text-xs font-semibold">
                   <span className="bg-green-100 text-green-600 px-2 py-1 rounded-full">🟢 Libre</span>
                   <span className="bg-amber-100 text-amber-600 px-2 py-1 rounded-full">🟡 Pendiente</span>
                   <span className="bg-red-100 text-red-600 px-2 py-1 rounded-full">🔴 Confirmado</span>
                 </div>
 
-                {/* Grilla de horarios */}
+                {/* Grilla de horarios — el color de cada bloque refleja el estado de la reserva */}
                 <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                   {HORARIOS.map((hora) => {
                     const res = getReservation(hora);
                     const status = res ? res.status : null;
                     return (
+                      // Al hacer click en un horario ocupado abre el modal de detalle de reserva
                       <button
                         key={hora}
                         className={`py-3 rounded-xl text-sm font-semibold transition-all ${
@@ -454,11 +477,12 @@ function OwnerPanel() {
           </div>
         )}
 
-        {/* Modal de detalle de reserva */}
+        {/* Modal de detalle de reserva: muestra info del cliente y permite confirmar o rechazar */}
         {showReservationModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl p-6 max-w-md w-full">
               <h2 className="font-bold text-gray-900 text-lg mb-4">
+                {/* Si no hay reserva en el horario clickeado, muestra mensaje de horario libre */}
                 {selectedReservation ? "Detalle de reserva" : "Horario libre"}
               </h2>
               {selectedReservation ? (
@@ -466,6 +490,7 @@ function OwnerPanel() {
                   <p className="text-gray-600">👤 <strong>{selectedReservation.clientName}</strong></p>
                   <p className="text-gray-600">📅 {selectedReservation.date} a las {selectedReservation.startTime}hs</p>
                   <p className="text-gray-600">Estado: <strong>{selectedReservation.status === "confirmed" ? "✅ Confirmada" : "⏳ Pendiente"}</strong></p>
+                  {/* Botones de accion solo visibles si la reserva todavia esta pendiente */}
                   {selectedReservation.status === "pending" && (
                     <div className="flex gap-2 mt-4">
                       <button
