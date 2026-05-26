@@ -1,7 +1,7 @@
-// useState para manejar todos los estados del panel, useEffect para cargar datos al montar
+// useState para todos los estados del panel, useEffect para montar los listeners de tiempo real
 import { useState, useEffect } from "react";
-// Funciones de Firestore para leer, crear, actualizar y eliminar canchas y reservas
-import { collection, addDoc, getDocs, query, where, doc, updateDoc, deleteDoc } from "firebase/firestore";
+// onSnapshot reemplaza a getDocs para canchas y reservas — ya no se necesita getDocs
+import { collection, addDoc, query, where, doc, updateDoc, deleteDoc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
@@ -13,24 +13,23 @@ function OwnerPanel() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  // Una instancia de useAsyncAction por cada accion critica para que sus estados de loading sean independientes
-  // y no se bloqueen entre si (ej: guardar edicion no bloquea el boton de agregar cancha)
+  // una instancia de useAsyncAction por cada accion critica para que sus loadings sean independientes
   const { run: runAddCourt,    loading: addingCourt    } = useAsyncAction();
   const { run: runSaveEdit,    loading: savingEdit     } = useAsyncAction();
   const { run: runDeleteCourt, loading: deletingCourt  } = useAsyncAction();
   const { run: runConfirm,     loading: confirmingRes  } = useAsyncAction();
   const { run: runReject,      loading: rejectingRes   } = useAsyncAction();
 
-  // canchas del dueno logueado
+  // canchas del dueno logueado — actualizadas en tiempo real por onSnapshot
   const [courts, setCourts] = useState([]);
 
-  // reservas pendientes del dia de hoy (panel principal)
+  // reservas pendientes del dia de hoy — actualizadas en tiempo real por onSnapshot
   const [pendingReservations, setPendingReservations] = useState([]);
 
-  // reservas confirmadas del dia de hoy (panel principal)
+  // reservas confirmadas del dia de hoy — actualizadas en tiempo real por onSnapshot
   const [confirmedReservations, setConfirmedReservations] = useState([]);
 
-  // todas las reservas activas de la cancha seleccionada (para el modal de horarios)
+  // reservas activas de la cancha seleccionada en el modal — listener propio que se activa con selectedCourt
   const [courtReservations, setCourtReservations] = useState([]);
 
   // fecha seleccionada en el modal de horarios, inicializada en hoy
@@ -42,7 +41,7 @@ function OwnerPanel() {
   // controla visibilidad del formulario de nueva cancha
   const [showForm, setShowForm] = useState(false);
 
-  // cancha seleccionada para ver sus horarios en el modal
+  // cancha seleccionada para el modal de horarios — cambiar este valor activa/cancela el listener de courtReservations
   const [selectedCourt, setSelectedCourt] = useState(null);
 
   // controla visibilidad del modal de horarios
@@ -57,7 +56,7 @@ function OwnerPanel() {
   // controla visibilidad del modal de edicion de cancha
   const [showEditModal, setShowEditModal] = useState(false);
 
-  // cancha que se esta editando actualmente
+  // cancha siendo editada actualmente
   const [courtToEdit, setCourtToEdit] = useState(null);
 
   // valores del formulario de edicion — se cargan al seleccionar una cancha del select
@@ -69,118 +68,99 @@ function OwnerPanel() {
   // valores del formulario de nueva cancha
   const [form, setForm] = useState({ name: "", sport: "futbol", price: "", location: "" });
 
-  // Patron SWR: muestra cache local al instante y luego consulta Firebase en segundo plano
-  const fetchMyCourts = async () => {
-    // cargamos desde cache de sesion para respuesta inmediata
-    const cachedCourts = sessionStorage.getItem("ownerCourtsCache");
-    if (cachedCourts) {
-      setCourts(JSON.parse(cachedCourts));
-    }
-
-    // consultamos Firebase para obtener la lista actualizada
-    const q = query(collection(db, "courts"), where("ownerId", "==", user.uid));
-    const snapshot = await getDocs(q);
-    const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-
-    // actualizamos estado y cache solo si los datos cambiaron para evitar renders innecesarios
-    if (JSON.stringify(data) !== cachedCourts) {
-      setCourts(data);
-      sessionStorage.setItem("ownerCourtsCache", JSON.stringify(data));
-    }
-  };
-
-  // Trae reservas pendientes y confirmadas del dia actual usando Promise.all para hacer ambas consultas en paralelo
-  const fetchReservations = async () => {
-    // mostramos datos de cache para no bloquear la UI mientras llega Firebase
-    const cachedRes = sessionStorage.getItem("ownerReservationsCache");
-    if (cachedRes) {
-      const { pending, confirmed } = JSON.parse(cachedRes);
-      setPendingReservations(pending);
-      setConfirmedReservations(confirmed);
-      setLoading(false); // apagamos el loading de inmediato porque ya tenemos datos visibles
-    }
-
-    // filtramos por la fecha de hoy directamente en Firestore para no traer reservas de otros dias
-    const fecha = new Date().toISOString().split("T")[0];
-    try {
-      // ejecutamos ambas consultas en paralelo para reducir el tiempo total de carga
-      const [pendingSnap, confirmedSnap] = await Promise.all([
-        getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "pending"), where("date", "==", fecha))),
-        getDocs(query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "confirmed"), where("date", "==", fecha))),
-      ]);
-
-      const pendingData = pendingSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      const confirmedData = confirmedSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      const freshData = { pending: pendingData, confirmed: confirmedData };
-
-      // actualizamos estado y cache solo si hay cambios para evitar renders innecesarios
-      if (JSON.stringify(freshData) !== cachedRes) {
-        setPendingReservations(pendingData);
-        setConfirmedReservations(confirmedData);
-        sessionStorage.setItem("ownerReservationsCache", JSON.stringify(freshData));
-      }
-    } catch (error) {
-      console.error("Error al traer las reservas del dueno:", error);
-    } finally {
-      setLoading(false);
-    }
-
-  };
-
-  // Trae las reservas activas de una cancha filtrando fechas client-side para evitar indices compuestos
-  // en Firestore (combinar "in" con ">=" en campos distintos requeriria un indice compuesto)
-  const fetchCourtReservations = async (courtId) => {
-    const q = query(
-      collection(db, "reservations"),
-      where("courtId", "==", courtId),
-      where("status", "in", ["confirmed", "pending"])
-    );
-    const snapshot = await getDocs(q);
-    const all = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-    // filtramos desde hoy en adelante client-side para mostrar solo reservas futuras o del dia
-    setCourtReservations(all.filter((r) => r.date >= today));
-  };
-
-  // carga canchas y reservas al montar el componente, y cada vez que cambia el usuario
+  // Listener en tiempo real de las canchas del dueno.
+  // Cualquier alta, edicion o baja se refleja automaticamente sin llamadas manuales post-mutacion.
   useEffect(() => {
-    if (user) {
-      fetchMyCourts();
-      fetchReservations();
-    }
+    if (!user) return;
+
+    const q = query(collection(db, "courts"), where("ownerId", "==", user.uid));
+
+    const unsub = onSnapshot(q, (snap) => {
+      setCourts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      // apagamos el loading en el primer disparo del listener
+      setLoading(false);
+    });
+
+    return () => unsub();
   }, [user]);
 
-  // Confirma una reserva en Firestore y aplica actualizacion optimista en el estado local
-  // para que la UI refleje el cambio sin esperar el round-trip del refetch
+  // Listener en tiempo real de las reservas pendientes de hoy.
+  // Se separa en dos listeners (pending y confirmed) porque Firestore no permite
+  // filtrar por dos valores distintos en el mismo campo con una sola query sin indice compuesto.
+  useEffect(() => {
+    if (!user) return;
+
+    const fecha = new Date().toISOString().split("T")[0];
+
+    const qPending = query(
+      collection(db, "reservations"),
+      where("ownerId", "==", user.uid),
+      where("status", "==", "pending"),
+      where("date", "==", fecha)
+    );
+
+    const unsubPending = onSnapshot(qPending, (snap) => {
+      setPendingReservations(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+
+    const qConfirmed = query(
+      collection(db, "reservations"),
+      where("ownerId", "==", user.uid),
+      where("status", "==", "confirmed"),
+      where("date", "==", fecha)
+    );
+
+    const unsubConfirmed = onSnapshot(qConfirmed, (snap) => {
+      setConfirmedReservations(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+
+    // cancelamos ambos listeners al desmontar o cuando cambia el usuario
+    return () => { unsubPending(); unsubConfirmed(); };
+  }, [user]);
+
+  // Listener en tiempo real de las reservas de la cancha seleccionada en el modal.
+  // Se monta cuando selectedCourt cambia y se cancela cuando selectedCourt vuelve a null
+  // (lo que ocurre al cerrar el modal). El filtro de fecha se hace client-side en getReservation()
+  // para evitar indices compuestos en Firestore (combinar "in" con ">=" requeriria uno).
+  useEffect(() => {
+    if (!selectedCourt) return;
+
+    const q = query(
+      collection(db, "reservations"),
+      where("courtId", "==", selectedCourt.id),
+      where("status", "in", ["confirmed", "pending"])
+    );
+
+    const unsub = onSnapshot(q, (snap) => {
+      const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      // filtramos desde hoy en adelante client-side para mostrar solo reservas futuras o del dia
+      setCourtReservations(all.filter((r) => r.date >= today));
+    });
+
+    return () => unsub();
+  }, [selectedCourt]);
+
+  // Confirma una reserva en Firestore — onSnapshot actualiza el calendario y el panel automaticamente
   const handleConfirm = (id) => runConfirm(async () => {
     await updateDoc(doc(db, "reservations", id), { status: "confirmed" });
-    // actualizacion optimista: cambia el estado en el calendario de inmediato
-    setCourtReservations(prev => prev.map(r => r.id === id ? { ...r, status: "confirmed" } : r));
-    // la quita de la lista de pendientes sin esperar el refetch
-    setPendingReservations(prev => prev.filter(r => r.id !== id));
-    fetchReservations();
   });
 
-  // Rechaza una reserva en Firestore y la elimina del estado local de forma optimista
+  // Rechaza una reserva en Firestore — onSnapshot la elimina del calendario y del panel automaticamente
   const handleReject = (id) => runReject(async () => {
     await updateDoc(doc(db, "reservations", id), { status: "cancelled" });
-    // actualizacion optimista: elimina la reserva del calendario y de la lista de pendientes
-    setCourtReservations(prev => prev.filter(r => r.id !== id));
-    setPendingReservations(prev => prev.filter(r => r.id !== id));
-    fetchReservations();
   });
 
-  // Agrega una nueva cancha a Firestore con el precio convertido a numero y el ownerId del usuario actual
+  // Agrega una nueva cancha en Firestore — onSnapshot actualiza el grid de canchas automaticamente
   const handleSubmit = (e) => {
     e.preventDefault();
     runAddCourt(async () => {
       await addDoc(collection(db, "courts"), { ...form, price: Number(form.price), available: true, ownerId: user.uid });
       setForm({ name: "", sport: "futbol", price: "", location: "" });
       setShowForm(false);
-      fetchMyCourts();
     });
   };
 
-  // Al seleccionar una cancha del select, carga sus datos actuales en el formulario de edicion
+  // al seleccionar una cancha del select, carga sus datos actuales en el formulario de edicion
   const handleSelectCourtToEdit = (courtId) => {
     const court = courts.find((c) => c.id === courtId);
     if (!court) return;
@@ -189,7 +169,7 @@ function OwnerPanel() {
     setEditErrors({});
   };
 
-  // Valida que ningun campo obligatorio del formulario de edicion este vacio antes de guardar
+  // valida que ningun campo obligatorio del formulario de edicion este vacio antes de guardar
   const validateEditForm = () => {
     const errors = {};
     if (!editForm.name.trim()) errors.name = "El nombre no puede estar vacío";
@@ -199,7 +179,7 @@ function OwnerPanel() {
     return Object.keys(errors).length === 0;
   };
 
-  // Guarda los cambios de la cancha editada en Firestore, convirtiendo el precio a numero
+  // guarda los cambios de la cancha en Firestore — onSnapshot actualiza el grid automaticamente
   const handleSaveEdit = () => {
     if (!validateEditForm()) return;
     runSaveEdit(async () => {
@@ -211,43 +191,40 @@ function OwnerPanel() {
       });
       setShowEditModal(false);
       setCourtToEdit(null);
-      fetchMyCourts();
     });
   };
 
-  // Elimina la cancha de Firestore, pide confirmacion previa para evitar borrados accidentales
+  // elimina la cancha de Firestore, pide confirmacion previa para evitar borrados accidentales
   const handleDeleteCourt = () => {
     if (!window.confirm(`¿Estás seguro que querés eliminar "${courtToEdit.name}"? Esta acción no se puede deshacer.`)) return;
     runDeleteCourt(async () => {
       await deleteDoc(doc(db, "courts", courtToEdit.id));
       setShowEditModal(false);
       setCourtToEdit(null);
-      fetchMyCourts();
     });
   };
 
-  // Franja horaria disponible para reservas, de 9 a 23hs con bloques de 1 hora
+  // franja horaria disponible para reservas, de 9 a 23hs con bloques de 1 hora
   const HORARIOS = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"];
 
-  // Utilidades para mostrar emoji y etiqueta legible segun el deporte de la cancha
+  // utilidades para mostrar emoji y etiqueta legible segun el deporte de la cancha
   const sportEmoji = (sport) => ({ futbol: "⚽", padel: "🎾", tenis: "🎾", basquet: "🏀" }[sport] || "🏅");
   const sportLabel = (sport) => ({ futbol: "Fútbol", padel: "Pádel", tenis: "Tenis", basquet: "Básquet" }[sport] || sport);
 
-  // Busca si existe una reserva activa para un horario y fecha especificos en el calendario
+  // busca si existe una reserva activa para el horario y fecha seleccionados en el calendario
   const getReservation = (horario) => {
     return courtReservations.find(r => r.startTime === horario && r.date === selectedScheduleDate) || null;
   };
 
-  // Al hacer click en una cancha, limpia el estado previo del modal y carga las reservas de esa cancha
+  // abre el modal de horarios para una cancha y activa el listener de courtReservations via selectedCourt
   const handleCourtClick = (court) => {
     setSelectedCourt(court);
     setSelectedScheduleDate(today);
-    setCourtReservations([]);
-    fetchCourtReservations(court.id);
+    setCourtReservations([]); // limpiamos el estado anterior mientras el nuevo listener carga
     setShowScheduleModal(true);
   };
 
-  // Pantalla de carga inicial — solo aparece si no habia datos en cache al montar
+  // pantalla de carga inicial — desaparece en cuanto el primer onSnapshot de canchas dispara
   if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Cargando...</div>;
 
   return (
@@ -289,7 +266,7 @@ function OwnerPanel() {
             </select>
             <input placeholder="Precio por hora" type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
             <input placeholder="Ubicación" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} required className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
-            {/* El boton se deshabilita mientras addingCourt es true para evitar doble submit */}
+            {/* el boton se deshabilita mientras addingCourt es true para evitar doble submit */}
             <button
               type="submit"
               disabled={addingCourt}
@@ -300,7 +277,7 @@ function OwnerPanel() {
           </form>
         )}
 
-        {/* Grid de cards de canchas — cada card abre el modal de horarios al hacer click */}
+        {/* Grid de cards de canchas — se actualiza en tiempo real cuando cambia la coleccion */}
         {courts.length === 0 ? (
           <div className="text-center py-20 text-gray-400">Todavía no tenés canchas cargadas.</div>
         ) : (
@@ -336,7 +313,7 @@ function OwnerPanel() {
                 <button onClick={() => setShowEditModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors">✕</button>
               </div>
               <div className="p-6 space-y-4">
-                {/* Select para elegir cual cancha editar — al cambiar carga sus datos en el form */}
+                {/* select para elegir cual cancha editar — al cambiar carga sus datos en el formulario */}
                 <select
                   onChange={(e) => handleSelectCourtToEdit(e.target.value)}
                   className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
@@ -347,7 +324,7 @@ function OwnerPanel() {
                     <option key={court.id} value={court.id}>{court.name}</option>
                   ))}
                 </select>
-                {/* Formulario de edicion — solo aparece cuando hay una cancha seleccionada */}
+                {/* formulario de edicion — solo aparece cuando hay una cancha seleccionada */}
                 {courtToEdit && (
                   <div className="space-y-4 pt-2">
                     <div>
@@ -388,7 +365,7 @@ function OwnerPanel() {
                       />
                       {editErrors.location && <p className="text-red-500 text-xs mt-1">{editErrors.location}</p>}
                     </div>
-                    {/* Ambos botones se deshabilitan mutuamente para evitar acciones simultaneas */}
+                    {/* ambos botones se deshabilitan mutuamente para evitar acciones simultaneas */}
                     <div className="flex gap-2 pt-2">
                       <button
                         onClick={handleSaveEdit}
@@ -412,18 +389,22 @@ function OwnerPanel() {
           </div>
         )}
 
-        {/* Modal de horarios: muestra el calendario de una cancha con sus reservas por fecha */}
+        {/* Modal de horarios: muestra el calendario en tiempo real de la cancha seleccionada */}
         {showScheduleModal && selectedCourt && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
 
-              {/* Header del modal con nombre y ubicacion de la cancha seleccionada */}
+              {/* Header del modal con nombre y ubicacion de la cancha */}
               <div className="bg-gradient-to-br from-green-400 to-emerald-500 p-6 rounded-t-2xl flex items-center justify-between">
                 <div>
                   <h2 className="font-bold text-white text-xl">{selectedCourt.name}</h2>
                   <p className="text-green-100 text-sm">📍 {selectedCourt.location}</p>
                 </div>
-                <button onClick={() => setShowScheduleModal(false)} className="text-white hover:bg-white hover:bg-opacity-20 rounded-lg p-2 transition-colors">
+                {/* al cerrar el modal reseteamos selectedCourt para cancelar el listener de courtReservations */}
+                <button
+                  onClick={() => { setShowScheduleModal(false); setSelectedCourt(null); }}
+                  className="text-white hover:bg-white hover:bg-opacity-20 rounded-lg p-2 transition-colors"
+                >
                   ✕
                 </button>
               </div>
@@ -451,13 +432,13 @@ function OwnerPanel() {
                   <span className="bg-red-100 text-red-600 px-2 py-1 rounded-full">🔴 Confirmado</span>
                 </div>
 
-                {/* Grilla de horarios — el color de cada bloque refleja el estado de la reserva */}
+                {/* Grilla de horarios — el color de cada bloque refleja el estado en tiempo real */}
                 <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                   {HORARIOS.map((hora) => {
                     const res = getReservation(hora);
                     const status = res ? res.status : null;
                     return (
-                      // Al hacer click en un horario ocupado abre el modal de detalle de reserva
+                      // click en horario ocupado abre el modal de detalle; en libre no hace nada
                       <button
                         key={hora}
                         className={`py-3 rounded-xl text-sm font-semibold transition-all ${
@@ -482,7 +463,7 @@ function OwnerPanel() {
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl p-6 max-w-md w-full">
               <h2 className="font-bold text-gray-900 text-lg mb-4">
-                {/* Si no hay reserva en el horario clickeado, muestra mensaje de horario libre */}
+                {/* si no hay reserva en el horario clickeado, muestra mensaje de horario libre */}
                 {selectedReservation ? "Detalle de reserva" : "Horario libre"}
               </h2>
               {selectedReservation ? (
@@ -490,7 +471,7 @@ function OwnerPanel() {
                   <p className="text-gray-600">👤 <strong>{selectedReservation.clientName}</strong></p>
                   <p className="text-gray-600">📅 {selectedReservation.date} a las {selectedReservation.startTime}hs</p>
                   <p className="text-gray-600">Estado: <strong>{selectedReservation.status === "confirmed" ? "✅ Confirmada" : "⏳ Pendiente"}</strong></p>
-                  {/* Botones de accion solo visibles si la reserva todavia esta pendiente */}
+                  {/* botones de accion solo visibles si la reserva todavia esta pendiente */}
                   {selectedReservation.status === "pending" && (
                     <div className="flex gap-2 mt-4">
                       <button

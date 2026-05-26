@@ -1,13 +1,16 @@
-import { useState, useRef, useEffect } from "react"; // useRef para detectar clicks afuera del menu, useEffect para cargar notificaciones al montar y limpiar event listener
-import { signOut } from "firebase/auth"; // funciones de Firestore para actualizar estado de reservas y whatsapp, y para fetchear reservas pendientes con su cancha asociada
-import { auth, db } from "../firebase/config";// useAuth para obtener info del usuario logueado y su rol, useNavigate para redirigir al logout y a otras paginas
-import { doc, updateDoc, collection, getDocs, query, where } from "firebase/firestore"; // Componentes de UI: Avatar de usuario con fallback a inicial, campana de notificaciones con badge y dropdown, menu de perfil con opciones segun rol y edicion de WhatsApp in-place para duenos
-import { useAuth } from "../context/AuthContext"; // useAuth para obtener info del usuario logueado y su rol, useNavigate para redirigir al logout y a otras paginas
-import { useNavigate, useLocation } from "react-router-dom"; // useLocation para saber en que ruta estamos y ocultar el boton de navegacion si ya estas en esa pagina
+import { useState, useRef, useEffect } from "react";
+import { signOut } from "firebase/auth";
+import { auth, db } from "../firebase/config";
+// onSnapshot reemplaza a getDocs para mantener las notificaciones en tiempo real
+// getDocs se sigue usando solo para resolver nombres de canchas (dato estatico secundario)
+import { doc, updateDoc, collection, getDocs, query, where, onSnapshot } from "firebase/firestore";
+import { useAuth } from "../context/AuthContext";
+import { useNavigate, useLocation } from "react-router-dom";
 
-function UserAvatar({ user, size = "md" }) { //en esta secion genramos un avatar circular para el usuario adaptando el tama;o segun la prop size,
-//  y mostrando la inicial del nombre si no hay foto o si la foto falla al cargar (ej. por bloqueo de CORS)
-  const [imgError, setImgError] = useState(false); //const estado para manejar error de carga de imagen (ej. bloqueo CORS) y mostrar inicial en su lugar no se puede reasignar.
+// Componente de avatar circular con fallback a inicial si no hay foto o falla la carga
+function UserAvatar({ user, size = "md" }) {
+  // flag para detectar error de carga de imagen (ej: bloqueo CORS de Google)
+  const [imgError, setImgError] = useState(false);
 
   const sizeClasses = {
     sm: "w-7 h-7 text-xs",
@@ -41,79 +44,90 @@ function UserAvatar({ user, size = "md" }) { //en esta secion genramos un avatar
 }
 
 function Navbar({ backTo, backLabel }) {
-  //datos globales de autenticacion y navegacion
+  // datos globales de autenticacion, rol y funcion para actualizar el usuario en contexto
   const { user, userRole, setUser } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation(); // ruta actual para ocultar botones de navegacion cuando ya estas en esa pagina
+  // ruta actual para ocultar botones de navegacion cuando ya estas en esa pagina
+  const location = useLocation();
 
-  //estados para controlar la apertura de los menus desplegables (perfil y notificaciones) y para manejar la edicion del WhatsApp de contacto en el menu de perfil (solo para duenos)
+  // refs para detectar clicks fuera de los menus y cerrarlos automaticamente
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
   const notifRef = useRef(null);
 
-  // Estados apra la edicion del telefono de contacto solo para owners
+  // estados para la edicion del telefono de contacto (solo para owners)
   const [editingWsp, setEditingWsp] = useState(false);
   const [tempPhone, setTempPhone] = useState(user?.whatsapp || "");
   const [wspError, setWspError] = useState("");
   const [wspSaving, setWspSaving] = useState(false);
 
-  // estados para el sistema de notificaciones de reservas pendientes para owners
+  // estados para el dropdown de notificaciones
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
 
-  //Variables calculadas para simplificar el renderizado
+  // variables calculadas para simplificar el renderizado
   const displayName = user?.name || user?.displayName || user?.email || "Usuario";
   const isOwner = userRole === "owner" || userRole === "superadmin";
 
-  // trae las reservas en estado pending asignadas al owner actual y resuelve los nombres de las canchas correspondientes en paralelo para mostrar en notificaciones
-  const fetchNotifications = async () => {
+  // Listener en tiempo real de reservas pendientes del owner.
+  // onSnapshot reemplaza al patron fetch manual: cada vez que cambia una reserva en Firestore
+  // el callback se dispara automaticamente y actualiza el badge y el dropdown sin recargar.
+  // Los nombres de canchas se resuelven con getDocs dentro del callback porque son datos secundarios
+  // que cambian poco y no justifican un segundo listener permanente.
+  useEffect(() => {
     if (!isOwner || !user) return;
-    //Obtenemos todas las reservas pendientes del usuario logueado
-    const snap = await getDocs(
-      query(collection(db, "reservations"), where("ownerId", "==", user.uid), where("status", "==", "pending"))
-    );
-    const reservations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-    // Extraemos los ids de canchas unicos para evitar consultas duplicadas y resolvemos sus nombres en paralelo con Promise.all  (se podria mejorar con cache global a ver)
-    const courtIds = [...new Set(reservations.map(r => r.courtId))];
-    const courtNames = {};
-    //consultamos las canchas en paralelo utilizando promise.all para optimizar tiempos, y guardamos los nombres en un objeto para referencia rapida al mapear las reservas luego.
-    //  Se usa where("__name__", "==", courtId) para traer solo el doc con ese ID sin necesidad de getDoc individual por cada cancha.
-    await Promise.all(courtIds.map(async (courtId) => {
-// Usamos el campo especial "__name__" para filtrar directamente por el ID del documento en Firestore
-      const cSnap = await getDocs(query(collection(db, "courts"), where("__name__", "==", courtId)));
-      cSnap.docs.forEach(d => { courtNames[d.id] = d.data().name; });
-    }));
-    //cruzamos los datos  , asignamos el nomrbre real de la cancha a cada reserva y ordenamos por fecha para mostrar en el dropdown de notificaciones,
-    // y seteamos el estado local de notifications para renderizar
-    setNotifications(
-      reservations
-        .map(r => ({ ...r, courtName: courtNames[r.courtId] || "Cancha" }))
-        .sort((a, b) => a.date.localeCompare(b.date))
+    const q = query(
+      collection(db, "reservations"),
+      where("ownerId", "==", user.uid),
+      where("status", "==", "pending")
     );
-  };
-// cambia el estado de una reserva a confirmed en firestore y refresca las notificaciones para reflejar el cambio
+
+    const unsub = onSnapshot(q, async (snap) => {
+      const reservations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // deduplicamos los courtIds para no consultar la misma cancha mas de una vez
+      const courtIds = [...new Set(reservations.map(r => r.courtId))];
+      const courtNames = {};
+      // resolvemos los nombres de canchas en paralelo con Promise.all
+      await Promise.all(courtIds.map(async (courtId) => {
+        // "__name__" filtra directamente por ID de documento sin necesitar getDoc individual
+        const cSnap = await getDocs(query(collection(db, "courts"), where("__name__", "==", courtId)));
+        cSnap.docs.forEach(d => { courtNames[d.id] = d.data().name; });
+      }));
+
+      // cruzamos reservas con nombres de canchas y ordenamos por fecha para el dropdown
+      setNotifications(
+        reservations
+          .map(r => ({ ...r, courtName: courtNames[r.courtId] || "Cancha" }))
+          .sort((a, b) => a.date.localeCompare(b.date))
+      );
+    });
+
+    // cancelamos el listener al desmontar o cuando cambia el usuario/rol
+    return () => unsub();
+  }, [user, userRole]);
+
+  // Confirma una reserva desde la campana — onSnapshot actualiza el badge automaticamente
   const handleNotifConfirm = async (id) => {
     await updateDoc(doc(db, "reservations", id), { status: "confirmed" });
-    fetchNotifications();
-  };
-  
-  // Confirmar reserva desde la campana, actauliza el estado de una reserva a cencelled en firestore y refresca las notificaciones para reflejar el cambio
-  const handleNotifReject = async (id) => {
-    await updateDoc(doc(db, "reservations", id), { status: "cancelled" });
-    fetchNotifications();
   };
 
-  // Cierra la sesion del usuario en firebase y redirige a login
+  // Rechaza una reserva desde la campana — onSnapshot elimina la notificacion automaticamente
+  const handleNotifReject = async (id) => {
+    await updateDoc(doc(db, "reservations", id), { status: "cancelled" });
+  };
+
+  // cierra la sesion del usuario en Firebase y redirige al login
   const handleLogout = async () => {
     await signOut(auth);
     navigate("/login");
   };
-  
-  //Limpia, valida e impacta el nuevo numero de wsp en bd y actualiza el estado global de la app para evitar re fetches inecesarios.
+
+  // limpia, valida y guarda el numero de WhatsApp del owner en Firestore y en el contexto global
   const handleSaveWsp = async () => {
-    const clean = tempPhone.replace(/\D/g, "");//remueve cualquier que no sea numero para validar solo el contenido numerico del telefono, y para guardar un formato limpio en la bd sin
-    //  espacios ni guiones que puedan complicar futuros usos del numero (ej. para enviar mensajes automaticos)
+    // removemos caracteres no numericos para guardar solo digitos en la BD
+    const clean = tempPhone.replace(/\D/g, "");
     if (clean.length < 10) {
       setWspError("Ingresa un numero valido (min. 10 digitos)");
       return;
@@ -123,8 +137,8 @@ function Navbar({ backTo, backLabel }) {
     try {
       const userRef = doc(db, "users", user.uid);
       await updateDoc(userRef, { whatsapp: clean });
-      //Sincroniza el cambio en el cotexto global authcontext al instante
-      setUser({ ...user, whatsapp: clean }); // propaga el cambio al contexto global para que Reserve.jsx lo lea sin un re-fetch
+      // propagamos el cambio al contexto global para que Reserve.jsx lo lea sin un re-fetch
+      setUser({ ...user, whatsapp: clean });
       setEditingWsp(false);
     } catch {
       setWspError("Error al guardar. Intenta de nuevo.");
@@ -133,38 +147,28 @@ function Navbar({ backTo, backLabel }) {
     }
   };
 
-  //Cancela la edicion del wsp y restablece le input con el valor original.
+  // cancela la edicion del wsp y restaura el valor original en el input
   const handleCancelWsp = () => {
     setTempPhone(user?.whatsapp || "");
     setWspError("");
     setEditingWsp(false);
   };
 
-  // hook que se dispara el montar el componente y cada vez que el usuario o su rol cambian,
-  //  para fetchear las reservas pendientes y mostrarlas en la campana de notificaciones para owners. Si el usuario no es owner o no esta logueado, no hace nada.
-  useEffect(() => {
-    fetchNotifications();
-  }, [user, userRole]);
-
-  // detexta clicks fuera de los menu desplegales de perfil y notificaciones para cerrarlos automaticamente, y ademas cancela la edicion del
-  // wsp si el menu de perfil se cierra por click afuera. Se vuelve a configurar el event listener cada vez que cambia el usuario 
-  // para evitar fugas de memoria o comportamientos extranos.
+  // detecta clicks fuera de los menus desplegables para cerrarlos automaticamente
+  // y cancela la edicion del wsp si el menu de perfil se cierra por click afuera
   useEffect(() => {
     const handleClickOutside = (e) => {
-      //si el menu de perfil esta abierto y el click es fuera de el, cerramos el menu y cancelamos la edicion del wsp para evitar que quede 
-      //abierto con un usuario diferente o que se pierda el cambio no guardado al cambiar de usuario.
       if (menuRef.current && !menuRef.current.contains(e.target)) {
         setMenuOpen(false);
-        handleCancelWsp();//resetea el formulario de wsp al cerrar el menu por click afuera para evitar que quede abierto con datos de otro usuario o que se pierda el cambio no guardado al cambiar de usuario.
+        handleCancelWsp();
       }
-      //si el panel de notifiaciones esta abierto y el click ocurre fuera 
       if (notifRef.current && !notifRef.current.contains(e.target)) {
         setNotifOpen(false);
       }
     };
 
     document.addEventListener("mousedown", handleClickOutside);
-    //Limpieza del evento al desmontar el componente o al cambiar de usuario para evitar fugas de memoria o comportamientos extranos.
+    // limpieza del event listener al desmontar o al cambiar de usuario para evitar fugas de memoria
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [user]);
 
@@ -172,7 +176,7 @@ function Navbar({ backTo, backLabel }) {
     <nav className="bg-white border-b border-gray-100 sticky top-0 z-10">
       <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
 
-        {/* Logo */}
+        {/* Logo — redirige al panel del owner o al home segun el rol */}
         <div
           className="flex items-center gap-2 cursor-pointer"
           onClick={() => navigate(isOwner ? "/owner" : "/")}
@@ -180,10 +184,9 @@ function Navbar({ backTo, backLabel }) {
           <span className="font-bold text-gray-900 text-lg">Reservá Tu Cancha</span>
         </div>
 
-        {/* Derecha */}
         <div className="flex items-center gap-2">
 
-          {/* Boton volver */}
+          {/* Boton volver — solo aparece cuando el Navbar recibe la prop backTo */}
           {backTo && (
             <button
               onClick={() => navigate(backTo)}
@@ -193,7 +196,7 @@ function Navbar({ backTo, backLabel }) {
             </button>
           )}
 
-          {/* Mis reservas (solo client, desktop) — se oculta si ya estas en esa pagina para evitar navigate a la misma ruta */}
+          {/* Mis reservas (solo client, desktop) — se oculta si ya estas en esa pagina */}
           {!backTo && userRole === "client" && location.pathname !== "/my-reservations" && (
             <button
               onClick={() => navigate("/my-reservations")}
@@ -203,8 +206,7 @@ function Navbar({ backTo, backLabel }) {
             </button>
           )}
 
-
-          {/* Campana de notificaciones (solo owners) */}
+          {/* Campana de notificaciones en tiempo real (solo owners) */}
           {isOwner && (
             <div className="relative" ref={notifRef}>
               <button
@@ -215,7 +217,7 @@ function Navbar({ backTo, backLabel }) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
                 </svg>
-                {/* Badge con conteo */}
+                {/* Badge con conteo de reservas pendientes — se actualiza en tiempo real */}
                 {notifications.length > 0 && (
                   <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[10px] font-black w-4 h-4 rounded-full flex items-center justify-center">
                     {notifications.length > 9 ? "9+" : notifications.length}
@@ -223,7 +225,7 @@ function Navbar({ backTo, backLabel }) {
                 )}
               </button>
 
-              {/* Dropdown de notificaciones */}
+              {/* Dropdown de notificaciones con acciones de confirmar y rechazar */}
               {notifOpen && (
                 <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-lg border border-gray-100 z-20 overflow-hidden">
                   <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
@@ -270,7 +272,7 @@ function Navbar({ backTo, backLabel }) {
             </div>
           )}
 
-          {/* Avatar + menu desplegable */}
+          {/* Avatar + menu desplegable de perfil */}
           <div className="relative" ref={menuRef}>
             <button
               onClick={() => { setMenuOpen((prev) => !prev); setNotifOpen(false); if (menuOpen) handleCancelWsp(); }}
@@ -288,11 +290,11 @@ function Navbar({ backTo, backLabel }) {
               </svg>
             </button>
 
-            {/* Dropdown de perfil */}
+            {/* Dropdown de perfil con info del usuario, edicion de WhatsApp y opciones de navegacion */}
             {menuOpen && (
               <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-lg border border-gray-100 py-2 z-20">
 
-                {/* Info usuario */}
+                {/* Info del usuario logueado */}
                 <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
                   <UserAvatar user={user} size="lg" />
                   <div className="min-w-0">
@@ -301,7 +303,7 @@ function Navbar({ backTo, backLabel }) {
                   </div>
                 </div>
 
-                {/* WhatsApp (solo owners) */}
+                {/* Edicion de WhatsApp de contacto (solo owners) */}
                 {isOwner && (
                   <div className="px-4 py-3 border-b border-gray-100">
                     <div className="flex items-center gap-2 mb-2">
@@ -349,7 +351,7 @@ function Navbar({ backTo, backLabel }) {
                           {user?.whatsapp ? `+${user.whatsapp}` : "No configurado"}
                         </p>
                         <button
-                          onClick={() => { setTempPhone(user?.whatsapp || ""); setEditingWsp(true); }} // no se puede depender del useState inicial porque se captura solo al montar
+                          onClick={() => { setTempPhone(user?.whatsapp || ""); setEditingWsp(true); }} // no depende del useState inicial porque se captura solo al montar
                           className="text-xs text-green-600 hover:text-green-700 font-semibold hover:underline"
                         >
                           {user?.whatsapp ? "Editar" : "Configurar"}
@@ -359,7 +361,7 @@ function Navbar({ backTo, backLabel }) {
                   </div>
                 )}
 
-                {/* Opciones mobile — misma logica que desktop: se ocultan si ya estas en esa ruta */}
+                {/* Opciones de navegacion mobile — se ocultan si ya estas en esa ruta */}
                 {userRole === "client" && location.pathname !== "/my-reservations" && (
                   <button
                     onClick={() => { setMenuOpen(false); navigate("/my-reservations"); }}
