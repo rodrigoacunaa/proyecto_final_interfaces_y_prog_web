@@ -4,8 +4,8 @@ service cloud.firestore {
 
     // Usuarios: cada uno solo puede leer/editar su propio doc.
     // El campo "role" nunca puede ser modificado por el propio usuario.
-    match /users/{userId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
+		match /users/{userId} {
+      allow read: if request.auth != null; 
       allow create: if request.auth != null && request.auth.uid == userId;
       allow update: if request.auth != null
                     && request.auth.uid == userId
