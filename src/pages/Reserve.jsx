@@ -1,34 +1,62 @@
-import { useEffect, useState, useRef } from "react";
+// useEffect para cargar la cancha al montar, useState para manejar fecha, horarios y estado del flujo
+import { useEffect, useState } from "react";
+// useParams para leer el courtId de la URL, useNavigate para redirigir si el dueno intenta reservar su propia cancha
 import { useParams, useNavigate } from "react-router-dom";
+// getDoc para traer un documento por ID, addDoc para crear la reserva, getDocs+query para traer horarios ocupados
 import { doc, getDoc, collection, addDoc, query, where, getDocs } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
+import Navbar from "../components/Navbar";
+// Hook para proteger el submit de la reserva contra doble-click, expone tambien loading y error
+import { useAsyncAction } from "../hooks/useAsyncAction";
 
-
+// Franja horaria disponible para reservas, de 9 a 20hs con bloques de 1 hora
 const HORARIOS = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00"];
 
 function Reserve() {
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const isSubmittingRef = useRef(false);
+  // run: ejecuta la accion de reservar con proteccion anti-doble-submit
+  // isSubmitting: bloquea todos los horarios mientras se procesa una reserva
+  // reserveError: mensaje de error si falla el addDoc
+  const { run: runReserve, loading: isSubmitting, error: reserveError } = useAsyncAction();
+  // courtId viene de la URL: /reserve/:courtId
   const { courtId } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
+  // datos de la cancha cargados desde Firestore
   const [court, setCourt] = useState(null);
+  // fecha seleccionada por el usuario en formato YYYY-MM-DD
   const [date, setDate] = useState("");
+  // mapa { hora -> status } de los horarios ocupados para la fecha seleccionada
   const [reservedSlots, setReservedSlots] = useState({});
+  // numero de whatsapp del dueno, pre-cargado al montar para poder abrir el chat de forma sincronica
+  const [ownerWhatsapp, setOwnerWhatsapp] = useState(null);
   const [loading, setLoading] = useState(true);
+  // flag que muestra el mensaje de exito tras crear la reserva correctamente
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
     const fetchCourt = async () => {
       const docRef = doc(db, "courts", courtId);
       const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) setCourt({ id: docSnap.id, ...docSnap.data() });
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        // el dueno no puede reservar su propia cancha, lo redirigimos al home
+        if (data.ownerId === user.uid) { navigate("/"); return; }
+        // Pre-cargamos el whatsapp del dueno aqui por dos razones:
+        // 1. el guard ownerSnap.exists() evita un crash por null-deref
+        // 2. guardar el numero en estado permite abrir window.open de forma sincronica
+        //    en handleReserve (antes de cualquier await), evitando que los bloqueadores de popups lo bloqueen
+        const ownerSnap = await getDoc(doc(db, "users", data.ownerId));
+        setOwnerWhatsapp(ownerSnap.exists() ? ownerSnap.data().whatsapp || null : null);
+        setCourt({ id: docSnap.id, ...data });
+      }
       setLoading(false);
     };
     fetchCourt();
   }, [courtId]);
 
+  // Trae los horarios ocupados (confirmados y pendientes) para la fecha seleccionada
+  // y los guarda como mapa { hora -> status } para consulta O(1) al renderizar la grilla
   const fetchReservedSlots = async (selectedDate) => {
     const q = query(
       collection(db, "reservations"),
@@ -37,31 +65,31 @@ function Reserve() {
       where("status", "in", ["confirmed", "pending"])
     );
     const snapshot = await getDocs(q);
-     //Armamos un objeto
     const slotsData = {};
     snapshot.docs.forEach((doc) => {
       const data = doc.data();
+      // indexamos por startTime para saber rapidamente si un horario esta ocupado al pintar los botones
       slotsData[data.startTime] = data.status;
     });
     setReservedSlots(slotsData);
   };
 
+  // Al cambiar la fecha limpiamos el exito anterior y recargamos los horarios ocupados para ese dia
   const handleDateChange = (e) => {
     setDate(e.target.value);
     setSuccess(false);
     fetchReservedSlots(e.target.value);
   };
 
-const handleReserve = async (startTime) => {
-    // Chequeamos la referencia síncrona
-    if (isSubmittingRef.current) return; 
-    
-    // Bloqueamos de forma inmediata
-    isSubmittingRef.current = true;
-    setIsSubmitting(true);
-    
-    try {
-      // Guardamos la reserva en Firestore
+  const handleReserve = (startTime) => {
+    // Armamos el mensaje pre-completado para el dueno con los datos de la reserva
+    const mensaje = `Hola! Quiero reservar *${court.name}* para el *${date}* a las *${startTime}hs*. Mi nombre es ${user.displayName || user.email}. Quedo esperando el alias para confirmar el pago. ¡Gracias!`;
+    const url = `https://api.whatsapp.com/send?phone=${ownerWhatsapp}&text=${encodeURIComponent(mensaje)}`;
+    // window.open debe llamarse ANTES de cualquier await para mantenerse en el contexto
+    // de gesto del usuario — si se llama despues de un await los bloqueadores de popups lo cancelan
+    window.open(url, "_blank");
+
+    runReserve(async () => {
       await addDoc(collection(db, "reservations"), {
         courtId,
         clientId: user.uid,
@@ -69,54 +97,31 @@ const handleReserve = async (startTime) => {
         ownerId: court.ownerId,
         date,
         startTime,
+        // endTime es el siguiente horario del array; si es el ultimo se usa "21:00" como cierre
         endTime: HORARIOS[HORARIOS.indexOf(startTime) + 1] || "21:00",
         status: "pending",
         createdAt: new Date().toISOString(),
       });
-
-      // Buscamos el teléfono del dueño
-      const ownerRef = doc(db, "users", court.ownerId);
-      const ownerSnap = await getDoc(ownerRef);
-      const ownerData = ownerSnap.data();
-      
-      // Preparamos y abrimos WhatsApp
-      const mensaje = `Hola! Quiero reservar *${court.name}* para el *${date}* a las *${startTime}hs*. Mi nombre es ${user.displayName || user.email}. Quedo esperando el alias para confirmar el pago. ¡Gracias!`;
-      const url = `https://api.whatsapp.com/send?phone=${ownerData.whatsapp}&text=${encodeURIComponent(mensaje)}`;
-      window.open(url, "_blank");
-
-      // Actualizamos el mensaje de éxito y recargamos los horarios
       setSuccess(true);
-      await fetchReservedSlots(date); 
-
-    } catch (error) {
-      // Mostramos el error por consola
-      console.error("Hubo un error al procesar la reserva:", error);
-    } finally {
-      // Liberamos el bloqueo sólo cuando todo lo anterior terminó
-      isSubmittingRef.current = false;
-      setIsSubmitting(false); 
-    }
+      // refrescamos los horarios para que el slot recien reservado aparezca como ocupado de inmediato
+      await fetchReservedSlots(date);
+    });
   };
 
+  // Pantalla de carga mientras se obtienen los datos de la cancha desde Firestore
   if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Cargando...</div>;
+  // Si el courtId no existe en Firestore mostramos error en lugar de romper el render
   if (!court) return <div className="min-h-screen flex items-center justify-center text-gray-400">Cancha no encontrada.</div>;
 
   return (
     <div className="min-h-screen bg-gray-50">
 
-      {/* Navbar */}
-      <nav className="bg-white border-b border-gray-100 sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
-          <button onClick={() => navigate("/")} className="flex items-center gap-2 text-gray-600 hover:text-green-600 font-medium transition-colors">
-            ← Volver
-          </button>
-          <span className="font-bold text-gray-900">Reservá Tu Cancha ⚽</span>
-        </div>
-      </nav>
+      {/* Navbar con boton de volver al listado de canchas */}
+      <Navbar backTo="/" backLabel="Canchas" />
 
       <div className="max-w-2xl mx-auto px-4 py-8">
 
-        {/* Info cancha */}
+        {/* Card con la info de la cancha: nombre, ubicacion y precio */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-6">
           <div className="bg-gradient-to-br from-green-400 to-emerald-500 p-8 flex items-center justify-center">
             <span className="text-6xl">⚽</span>
@@ -128,7 +133,7 @@ const handleReserve = async (startTime) => {
           </div>
         </div>
 
-        {/* Selector de fecha */}
+        {/* Selector de fecha — solo permite fechas desde hoy en adelante */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-6">
           <h2 className="font-semibold text-gray-900 mb-3">Elegí una fecha</h2>
           <input
@@ -140,31 +145,45 @@ const handleReserve = async (startTime) => {
           />
         </div>
 
-        {/* Mensaje de éxito */}
+        {/* Mensaje de exito tras crear la reserva — le indica al usuario que espere confirmacion por WhatsApp */}
         {success && (
           <div className="bg-green-50 border border-green-200 text-green-700 rounded-2xl px-5 py-4 mb-6 text-sm">
             ✅ <strong>¡Solicitud enviada!</strong> El dueño te va a confirmar por WhatsApp una vez que reciba el pago.
           </div>
         )}
 
-        {/* Horarios */}
-        {date && (
+        {/* Error de Firestore u otro error inesperado al intentar crear la reserva */}
+        {reserveError && (
+          <div className="bg-red-50 border border-red-200 text-red-700 rounded-2xl px-5 py-4 mb-6 text-sm">
+            ❌ {reserveError}
+          </div>
+        )}
+
+        {/* Aviso si el dueno todavia no configuro su WhatsApp — bloquea la reserva hasta que lo haga */}
+        {!ownerWhatsapp && !loading && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-700 rounded-2xl px-5 py-4 mb-6 text-sm">
+            ⚠️ El dueño aún no configuró su WhatsApp de contacto. No podés reservar hasta que lo haga.
+          </div>
+        )}
+
+        {/* Grilla de horarios — solo se muestra si hay fecha seleccionada y el dueno tiene WhatsApp configurado */}
+        {date && ownerWhatsapp && (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
             <h2 className="font-semibold text-gray-900 mb-4">Horarios disponibles</h2>
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
               {HORARIOS.map((hora) => {
                 const status = reservedSlots[hora];
                 const isReserved = status === "confirmed" || status === "pending";
-                
-                //Lógica para los colores del botón
-                let btnClass = "bg-green-500 hover:bg-green-600 text-white shadow-sm hover:shadow-md" //El turno se encuentra libre por defecto
 
-                if(status === "confirmed"){
+                // Estilos dinamicos segun el estado del horario: libre, pendiente, confirmado o en proceso de submit
+                let btnClass = "bg-green-500 hover:bg-green-600 text-white shadow-sm hover:shadow-md";
+                if (status === "confirmed") {
                   btnClass = "bg-gray-100 text-gray-400 cursor-not-allowed";
-                }else if(status === "pending"){
-                  btnClass = "bg-amber-50 text-amber-600 border-amber-200 cursor-not-allowed";
-                }else if(isSubmitting){
-                  btnClass = "bg-gray-100 text-gray-400 cursor-not-allowed"; //bloqueamos los botones libres mientras se envía
+                } else if (status === "pending") {
+                  btnClass = "bg-amber-50 text-amber-600 border border-amber-200 cursor-not-allowed";
+                } else if (isSubmitting) {
+                  // bloquea todos los horarios libres mientras se procesa la reserva activa
+                  btnClass = "bg-gray-100 text-gray-400 cursor-not-allowed";
                 }
 
                 return (
@@ -172,14 +191,12 @@ const handleReserve = async (startTime) => {
                     key={hora}
                     onClick={() => !isReserved && !isSubmitting && handleReserve(hora)}
                     disabled={isReserved || isSubmitting}
-                    className={`py-3 rounded-xl text-sm font-semibold transition-all ${btnClass}`}>
-
+                    className={`py-3 rounded-xl text-sm font-semibold transition-all ${btnClass}`}
+                  >
                     <span className="font-semibold block">{hora}</span>
-
-                    {/*textos descriptivos debajo de la hora*/}
                     {status === "confirmed" && <span className="block text-xs font-normal mt-0.5">Ocupado</span>}
                     {status === "pending" && <span className="block text-xs font-normal mt-0.5">Pendiente de pago</span>}
-                    {isSubmitting && !isReserved && <span className="block text-xs font normal mt-0.5">Enviando...</span>}
+                    {isSubmitting && !isReserved && <span className="block text-xs font-normal mt-0.5">Enviando...</span>}
                   </button>
                 );
               })}

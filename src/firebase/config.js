@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getAnalytics } from "firebase/analytics";
 
 // Datos de firebase (configurar con .env para prod o con .env.development para testing)
@@ -22,6 +22,10 @@ export const analytics = getAnalytics(app);
 
 // Exportamos las herramientas que usamos en el proyecto
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+// persistentLocalCache activa IndexedDB desde la inicializacion (API actual en Firebase 10+).
+// persistentMultipleTabManager permite que varias pestanas compartan el cache sin conflictos.
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+});
 
 export default app;

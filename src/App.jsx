@@ -5,6 +5,7 @@ import Home from "./pages/Home";
 import OwnerPanel from "./pages/OwnerPanel";
 import Reserve from "./pages/Reserve";
 import MyReservations from "./pages/MyReservations";
+import NotFound from "./pages/NotFound";
 
 function PrivateRoute({ children }) {
   const { user } = useAuth();
@@ -23,7 +24,7 @@ function OwnerRoute({ children }) {
   return children;
 }
 
-// redirige según el rol al entrar a la raíz
+// redirige segun el rol al entrar a la raiz
 function RootRoute({ children }) {
   const { user, userRole } = useAuth();
   if (!user) return <Navigate to="/login" />;
@@ -51,6 +52,7 @@ function App() {
         <Route path="/my-reservations" element={
           <PrivateRoute><MyReservations /></PrivateRoute>
         } />
+        <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
   );

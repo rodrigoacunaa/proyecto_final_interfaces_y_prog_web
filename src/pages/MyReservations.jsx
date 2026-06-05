@@ -1,79 +1,86 @@
+// useEffect para montar el listener de tiempo real, useState para manejar reservas, canchas y carga
 import { useEffect, useState } from "react";
-import { collection, query, where, getDocs, doc, updateDoc } from "firebase/firestore";
-import { db, auth } from "../firebase/config";
+// onSnapshot reemplaza a getDocs para las reservas del cliente — getDocs se mantiene solo para canchas (dato secundario)
+import { collection, query, where, getDocs, doc, updateDoc, onSnapshot } from "firebase/firestore";
+import { db } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { signOut } from "firebase/auth";
+import Navbar from "../components/Navbar";
 
 function MyReservations() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  // lista de reservas del cliente ordenadas por fecha de creacion descendente
   const [reservations, setReservations] = useState([]);
+  // mapa { courtId -> datos de la cancha } para acceso rapido sin re-consultar Firestore por cada reserva
   const [courts, setCourts] = useState({});
   const [loading, setLoading] = useState(true);
 
-  const fetchReservations = async () => {
+  // Listener en tiempo real de las reservas del cliente.
+  // Cada vez que una reserva cambia de estado (ej: el owner la confirma), onSnapshot
+  // dispara el callback y la UI se actualiza automaticamente sin necesidad de refetch manual.
+  // Los datos de canchas se resuelven con getDocs dentro del callback porque son estaticos
+  // y no justifican un listener permanente adicional.
+  useEffect(() => {
+    if (!user) return;
+
     const q = query(collection(db, "reservations"), where("clientId", "==", user.uid));
-    const snapshot = await getDocs(q);
-    const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
-    const courtIds = [...new Set(data.map((r) => r.courtId))];
-    const courtData = {};
-    for (const courtId of courtIds) {
-      const courtSnap = await getDocs(query(collection(db, "courts"), where("__name__", "==", courtId)));
-      courtSnap.docs.forEach((d) => { courtData[d.id] = d.data(); });
-    }
+    const unsub = onSnapshot(q, async (snap) => {
+      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-    setCourts(courtData);
-    setReservations(data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
-    setLoading(false);
-  };
+      // deduplicamos los courtIds para no consultar la misma cancha mas de una vez
+      const courtIds = [...new Set(data.map((r) => r.courtId))];
+      const courtData = {};
+      // "__name__" filtra por ID de documento sin necesitar getDoc individual por cada cancha
+      for (const courtId of courtIds) {
+        const courtSnap = await getDocs(query(collection(db, "courts"), where("__name__", "==", courtId)));
+        courtSnap.docs.forEach((d) => { courtData[d.id] = d.data(); });
+      }
 
-  useEffect(() => { fetchReservations(); }, []);
+      // ordenamos por fecha de creacion descendente para mostrar las mas recientes primero
+      const sortedReservations = data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setReservations(sortedReservations);
+      setCourts(courtData);
+      setLoading(false);
+    });
 
+    // cancelamos el listener al desmontar para evitar fugas de memoria
+    return () => unsub();
+  }, [user]);
+
+  // Cancela una reserva en Firestore — onSnapshot detecta el cambio y actualiza la lista automaticamente
   const handleCancel = async (reservationId) => {
     await updateDoc(doc(db, "reservations", reservationId), { status: "cancelled" });
-    fetchReservations();
   };
 
+  // devuelve estilos y etiqueta segun el estado de la reserva para el badge de color
   const statusConfig = (status) => {
     if (status === "pending") return { label: "Pendiente de pago", bg: "bg-amber-50", text: "text-amber-600", border: "border-amber-100" };
     if (status === "confirmed") return { label: "Confirmada", bg: "bg-green-50", text: "text-green-600", border: "border-green-100" };
     if (status === "cancelled") return { label: "Cancelada", bg: "bg-red-50", text: "text-red-500", border: "border-red-100" };
+    // fallback por si llega un estado desconocido desde Firestore
     return { label: status, bg: "bg-gray-50", text: "text-gray-500", border: "border-gray-100" };
   };
 
+  // pantalla de carga inicial — desaparece en cuanto onSnapshot dispara el primer callback
   if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Cargando tus reservas...</div>;
 
   return (
     <div className="min-h-screen bg-gray-50">
 
-      {/* Navbar */}
-      <nav className="bg-white border-b border-gray-100 sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-2xl">⚽</span>
-            <span className="font-bold text-gray-900 text-lg">Reservá Tu Cancha</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => navigate("/")} className="text-sm text-gray-600 hover:text-green-600 font-medium px-3 py-2 rounded-lg hover:bg-green-50 transition-colors">
-              ← Volver
-            </button>
-            <button onClick={() => { signOut(auth); navigate("/login"); }} className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium px-4 py-2 rounded-lg transition-colors">
-              Salir
-            </button>
-          </div>
-        </div>
-      </nav>
+      {/* Navbar con boton de volver al inicio */}
+      <Navbar backTo="/" backLabel="Inicio" />
 
       <div className="max-w-2xl mx-auto px-4 py-8">
 
-        {/* Header */}
+        {/* Header de la pagina */}
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Mis reservas</h1>
           <p className="text-gray-500 mt-1">Historial de todas tus reservas</p>
         </div>
 
+        {/* Estado vacio: el usuario aun no tiene reservas */}
         {reservations.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-12 text-center">
             <span className="text-5xl">📋</span>
@@ -85,6 +92,7 @@ function MyReservations() {
         ) : (
           <div className="space-y-4">
             {reservations.map((res) => {
+              // resolvemos los datos de la cancha desde el mapa local para no re-consultar Firestore
               const court = courts[res.courtId];
               const status = statusConfig(res.status);
               return (
@@ -96,10 +104,12 @@ function MyReservations() {
                       <p className="text-gray-500 text-sm">📅 {res.date} a las {res.startTime}hs</p>
                       <p className="text-gray-500 text-sm">💰 ${court ? court.price : ""}/hora</p>
                     </div>
+                    {/* Badge de estado con color dinamico segun statusConfig */}
                     <span className={`text-xs font-semibold ${status.bg} ${status.text} px-3 py-1 rounded-full whitespace-nowrap ml-3`}>
                       {status.label}
                     </span>
                   </div>
+                  {/* Boton de cancelar solo visible si la reserva todavia esta pendiente */}
                   {res.status === "pending" && (
                     <button
                       onClick={() => handleCancel(res.id)}
