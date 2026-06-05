@@ -1,9 +1,9 @@
-// useEffect para cargar la cancha al montar, useState para manejar fecha, horarios y estado del flujo
+// useEffect para cargar la cancha al montar y el listener de horarios, useState para fecha y estado del flujo
 import { useEffect, useState } from "react";
 // useParams para leer el courtId de la URL, useNavigate para redirigir si el dueno intenta reservar su propia cancha
 import { useParams, useNavigate } from "react-router-dom";
-// getDoc para traer un documento por ID, addDoc para crear la reserva, getDocs+query para traer horarios ocupados
-import { doc, getDoc, collection, addDoc, query, where, getDocs } from "firebase/firestore";
+// getDoc para traer un documento por ID, addDoc para crear la reserva, onSnapshot para horarios en tiempo real
+import { doc, getDoc, collection, addDoc, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
 import Navbar from "../components/Navbar";
@@ -55,30 +55,32 @@ function Reserve() {
     fetchCourt();
   }, [courtId]);
 
-  // Trae los horarios ocupados (confirmados y pendientes) para la fecha seleccionada
-  // y los guarda como mapa { hora -> status } para consulta O(1) al renderizar la grilla
-  const fetchReservedSlots = async (selectedDate) => {
+  // Listener en tiempo real de horarios ocupados para la fecha seleccionada.
+  // Se suscribe cada vez que cambia la fecha y se limpia al cambiar o desmontar,
+  // de modo que cualquier reserva nueva de otro cliente aparece sin recargar.
+  useEffect(() => {
+    if (!date) return;
     const q = query(
       collection(db, "reservations"),
       where("courtId", "==", courtId),
-      where("date", "==", selectedDate),
+      where("date", "==", date),
       where("status", "in", ["confirmed", "pending"])
     );
-    const snapshot = await getDocs(q);
-    const slotsData = {};
-    snapshot.docs.forEach((doc) => {
-      const data = doc.data();
-      // indexamos por startTime para saber rapidamente si un horario esta ocupado al pintar los botones
-      slotsData[data.startTime] = data.status;
+    const unsub = onSnapshot(q, (snap) => {
+      const slotsData = {};
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        slotsData[data.startTime] = data.status;
+      });
+      setReservedSlots(slotsData);
     });
-    setReservedSlots(slotsData);
-  };
+    return () => unsub();
+  }, [courtId, date]);
 
-  // Al cambiar la fecha limpiamos el exito anterior y recargamos los horarios ocupados para ese dia
+  // Al cambiar la fecha solo limpiamos el exito anterior; el useEffect de onSnapshot se encarga de los horarios
   const handleDateChange = (e) => {
     setDate(e.target.value);
     setSuccess(false);
-    fetchReservedSlots(e.target.value);
   };
 
   const handleReserve = (startTime) => {
@@ -103,8 +105,7 @@ function Reserve() {
         createdAt: new Date().toISOString(),
       });
       setSuccess(true);
-      // refrescamos los horarios para que el slot recien reservado aparezca como ocupado de inmediato
-      await fetchReservedSlots(date);
+      // onSnapshot detecta el nuevo doc y actualiza los horarios automaticamente
     });
   };
 
