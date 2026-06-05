@@ -76,7 +76,7 @@ export function AuthProvider({ children }) {
   );
 }
 
-// Hook de acceso al contexto — lanza un error claro si se usa fuera del AuthProvider
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   return useContext(AuthContext);
 }

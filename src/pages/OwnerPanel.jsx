@@ -4,15 +4,12 @@ import { useState, useEffect } from "react";
 import { collection, addDoc, query, where, doc, updateDoc, deleteDoc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
-import { useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 // Hook que protege acciones async contra doble-submit usando un ref de bloqueo sincronico
 import { useAsyncAction } from "../hooks/useAsyncAction";
 
 function OwnerPanel() {
   const { user } = useAuth();
-  const navigate = useNavigate();
-
   // una instancia de useAsyncAction por cada accion critica para que sus loadings sean independientes
   const { run: runAddCourt,    loading: addingCourt    } = useAsyncAction();
   const { run: runSaveEdit,    loading: savingEdit     } = useAsyncAction();
@@ -24,10 +21,10 @@ function OwnerPanel() {
   const [courts, setCourts] = useState([]);
 
   // reservas pendientes del dia de hoy — actualizadas en tiempo real por onSnapshot
-  const [pendingReservations, setPendingReservations] = useState([]);
+  const [_pendingReservations, setPendingReservations] = useState([]);
 
   // reservas confirmadas del dia de hoy — actualizadas en tiempo real por onSnapshot
-  const [confirmedReservations, setConfirmedReservations] = useState([]);
+  const [_confirmedReservations, setConfirmedReservations] = useState([]);
 
   // reservas activas de la cancha seleccionada en el modal — listener propio que se activa con selectedCourt
   const [courtReservations, setCourtReservations] = useState([]);
