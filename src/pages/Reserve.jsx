@@ -176,9 +176,15 @@ function Reserve() {
                 const status = reservedSlots[hora];
                 const isReserved = status === "confirmed" || status === "pending";
 
-                // Estilos dinamicos segun el estado del horario: libre, pendiente, confirmado o en proceso de submit
+                const now = new Date();
+                const today = now.toISOString().split("T")[0];
+                const isPast = date === today && parseInt(hora) <= now.getHours();
+
+                // Estilos dinamicos segun el estado del horario: libre, pendiente, confirmado, pasado o en proceso de submit
                 let btnClass = "bg-green-500 hover:bg-green-600 text-white shadow-sm hover:shadow-md";
-                if (status === "confirmed") {
+                if (isPast && !isReserved) {
+                  btnClass = "bg-gray-100 text-gray-300 cursor-not-allowed";
+                } else if (status === "confirmed") {
                   btnClass = "bg-gray-100 text-gray-400 cursor-not-allowed";
                 } else if (status === "pending") {
                   btnClass = "bg-amber-50 text-amber-600 border border-amber-200 cursor-not-allowed";
@@ -190,14 +196,15 @@ function Reserve() {
                 return (
                   <button
                     key={hora}
-                    onClick={() => !isReserved && !isSubmitting && handleReserve(hora)}
-                    disabled={isReserved || isSubmitting}
+                    onClick={() => !isReserved && !isPast && !isSubmitting && handleReserve(hora)}
+                    disabled={isReserved || isPast || isSubmitting}
                     className={`py-3 rounded-xl text-sm font-semibold transition-all ${btnClass}`}
                   >
                     <span className="font-semibold block">{hora}</span>
                     {status === "confirmed" && <span className="block text-xs font-normal mt-0.5">Ocupado</span>}
                     {status === "pending" && <span className="block text-xs font-normal mt-0.5">Pendiente de pago</span>}
-                    {isSubmitting && !isReserved && <span className="block text-xs font-normal mt-0.5">Enviando...</span>}
+                    {isPast && !isReserved && <span className="block text-xs font-normal mt-0.5">Pasado</span>}
+                    {isSubmitting && !isReserved && !isPast && <span className="block text-xs font-normal mt-0.5">Enviando...</span>}
                   </button>
                 );
               })}
