@@ -20,11 +20,6 @@ function OwnerPanel() {
   // canchas del dueno logueado — actualizadas en tiempo real por onSnapshot
   const [courts, setCourts] = useState([]);
 
-  // reservas pendientes del dia de hoy — actualizadas en tiempo real por onSnapshot
-  const [_pendingReservations, setPendingReservations] = useState([]);
-
-  // reservas confirmadas del dia de hoy — actualizadas en tiempo real por onSnapshot
-  const [_confirmedReservations, setConfirmedReservations] = useState([]);
 
   // reservas activas de la cancha seleccionada en el modal — listener propio que se activa con selectedCourt
   const [courtReservations, setCourtReservations] = useState([]);
@@ -84,39 +79,6 @@ function OwnerPanel() {
     return () => unsub();
   }, [user]);
 
-  // Listener en tiempo real de las reservas pendientes de hoy.
-  // Se separa en dos listeners (pending y confirmed) porque Firestore no permite
-  // filtrar por dos valores distintos en el mismo campo con una sola query sin indice compuesto.
-  useEffect(() => {
-    if (!user) return;
-
-    const fecha = new Date().toISOString().split("T")[0];
-
-    const qPending = query(
-      collection(db, "reservations"),
-      where("ownerId", "==", user.uid),
-      where("status", "==", "pending"),
-      where("date", "==", fecha)
-    );
-
-    const unsubPending = onSnapshot(qPending, (snap) => {
-      setPendingReservations(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
-
-    const qConfirmed = query(
-      collection(db, "reservations"),
-      where("ownerId", "==", user.uid),
-      where("status", "==", "confirmed"),
-      where("date", "==", fecha)
-    );
-
-    const unsubConfirmed = onSnapshot(qConfirmed, (snap) => {
-      setConfirmedReservations(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
-
-    // cancelamos ambos listeners al desmontar o cuando cambia el usuario
-    return () => { unsubPending(); unsubConfirmed(); };
-  }, [user]);
 
   // Listeners en tiempo real de la grilla de agenda — se re-suscriben cuando cambia gridDate
   useEffect(() => {
