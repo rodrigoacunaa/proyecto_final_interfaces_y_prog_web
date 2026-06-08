@@ -32,6 +32,9 @@ function OwnerPanel() {
   // fecha seleccionada en el modal de horarios, inicializada en hoy
   const today = new Date().toISOString().split("T")[0];
   const [selectedScheduleDate, setSelectedScheduleDate] = useState(today);
+  const [gridDate, setGridDate] = useState(today);
+  const [gridPending, setGridPending] = useState([]);
+  const [gridConfirmed, setGridConfirmed] = useState([]);
 
   const [loading, setLoading] = useState(true);
 
@@ -115,6 +118,29 @@ function OwnerPanel() {
     return () => { unsubPending(); unsubConfirmed(); };
   }, [user]);
 
+  // Listeners en tiempo real de la grilla de agenda — se re-suscriben cuando cambia gridDate
+  useEffect(() => {
+    if (!user) return;
+
+    const qP = query(
+      collection(db, "reservations"),
+      where("ownerId", "==", user.uid),
+      where("date", "==", gridDate),
+      where("status", "==", "pending")
+    );
+    const qC = query(
+      collection(db, "reservations"),
+      where("ownerId", "==", user.uid),
+      where("date", "==", gridDate),
+      where("status", "==", "confirmed")
+    );
+
+    const unsubP = onSnapshot(qP, (snap) => setGridPending(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    const unsubC = onSnapshot(qC, (snap) => setGridConfirmed(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+
+    return () => { unsubP(); unsubC(); };
+  }, [user, gridDate]);
+
   // Listener en tiempo real de las reservas de la cancha seleccionada en el modal.
   // Se monta cuando selectedCourt cambia y se cancela cuando selectedCourt vuelve a null
   // (lo que ocurre al cerrar el modal). El filtro de fecha se hace client-side en getReservation()
@@ -150,6 +176,7 @@ function OwnerPanel() {
   // Agrega una nueva cancha en Firestore — onSnapshot actualiza el grid de canchas automaticamente
   const handleSubmit = (e) => {
     e.preventDefault();
+    if (courts.length >= 6) return;
     runAddCourt(async () => {
       await addDoc(collection(db, "courts"), { ...form, price: Number(form.price), available: true, ownerId: user.uid });
       setForm({ name: "", sport: "futbol", price: "", location: "" });
@@ -204,6 +231,29 @@ function OwnerPanel() {
   // franja horaria disponible para reservas, de 9 a 23hs con bloques de 1 hora
   const HORARIOS = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"];
 
+  const GRID_HORARIOS = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00"];
+
+  const navigateDate = (delta) => {
+    const d = new Date(gridDate + "T00:00:00");
+    d.setDate(d.getDate() + delta);
+    setGridDate(d.toISOString().split("T")[0]);
+  };
+
+  const formatGridDate = (dateStr) => {
+    const d = new Date(dateStr + "T00:00:00");
+    return d.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" });
+  };
+
+  const gridReservations = [...gridPending, ...gridConfirmed];
+
+  const totalBilled = gridConfirmed.reduce((acc, r) => {
+    const court = courts.find((c) => c.id === r.courtId);
+    return acc + (court?.price || 0);
+  }, 0);
+
+  const totalSlots = courts.length * GRID_HORARIOS.length;
+  const occupancyPct = totalSlots > 0 ? Math.round((gridReservations.length / totalSlots) * 100) : 0;
+
   // utilidades para mostrar emoji y etiqueta legible segun el deporte de la cancha
   const sportEmoji = (sport) => ({ futbol: "⚽", padel: "🎾", tenis: "🎾", basquet: "🏀" }[sport] || "🏅");
   const sportLabel = (sport) => ({ futbol: "Fútbol", padel: "Pádel", tenis: "Tenis", basquet: "Básquet" }[sport] || sport);
@@ -241,12 +291,18 @@ function OwnerPanel() {
             >
               ✏️ Editar cancha
             </button>
-            <button
-              onClick={() => setShowForm(!showForm)}
-              className="bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
-            >
-              {showForm ? "Cancelar" : "+ Agregar cancha"}
-            </button>
+            {courts.length >= 6 ? (
+              <span className="text-xs text-gray-400 bg-gray-100 px-4 py-2 rounded-xl">
+                Límite de 6 canchas alcanzado
+              </span>
+            ) : (
+              <button
+                onClick={() => setShowForm(!showForm)}
+                className="bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
+              >
+                {showForm ? "Cancelar" : "+ Agregar cancha"}
+              </button>
+            )}
           </div>
         </div>
 
@@ -298,6 +354,102 @@ function OwnerPanel() {
                 </div>
               </button>
             ))}
+          </div>
+        )}
+
+        {/* Grilla de agenda diaria */}
+        {courts.length > 0 && (
+          <div className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+
+            {/* Header con navegacion de fecha */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <h2 className="font-bold text-gray-900 text-lg">Agenda del día</h2>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => navigateDate(-1)}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-500 text-lg transition-colors"
+                >
+                  ‹
+                </button>
+                <span className="text-sm font-semibold text-gray-700 capitalize min-w-[180px] text-center">
+                  {formatGridDate(gridDate)}
+                </span>
+                <button
+                  onClick={() => navigateDate(1)}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-500 text-lg transition-colors"
+                >
+                  ›
+                </button>
+              </div>
+            </div>
+
+            {/* Grid con scroll horizontal si hay muchas canchas */}
+            <div className="overflow-x-auto">
+              <div style={{ minWidth: `${80 + courts.length * 150}px` }}>
+
+                {/* Cabecera de columnas (una por cancha) */}
+                <div className="flex border-b border-gray-100">
+                  <div className="w-20 shrink-0" />
+                  {courts.map((court, i) => (
+                    <div key={court.id} className="flex-1 min-w-[150px] px-3 py-3 border-l border-gray-100">
+                      <p className="font-semibold text-gray-900 text-sm truncate">{court.name}</p>
+                      <p className="text-xs text-gray-400 truncate">📍 {court.location}</p>
+                      <div className={`h-0.5 mt-2 rounded-full ${i === 0 ? "bg-green-400" : "bg-gray-200"}`} />
+                    </div>
+                  ))}
+                </div>
+
+                {/* Filas de horarios */}
+                {GRID_HORARIOS.map((hora) => (
+                  <div key={hora} className="flex border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
+                    <div className="w-20 shrink-0 text-xs text-gray-400 py-3 text-right pr-4 font-medium self-start pt-3">
+                      {hora}
+                    </div>
+                    {courts.map((court) => {
+                      const res = gridReservations.find((r) => r.courtId === court.id && r.startTime === hora);
+                      return (
+                        <div key={court.id} className="flex-1 min-w-[150px] border-l border-gray-100 px-2 py-1.5 min-h-[48px]">
+                          {res && (
+                            <button
+                              className={`w-full text-left rounded-lg px-2.5 py-2 text-xs transition-opacity hover:opacity-80 ${
+                                res.status === "confirmed"
+                                  ? "bg-green-50 border border-green-200 text-green-800"
+                                  : "bg-amber-50 border border-amber-200 text-amber-800"
+                              }`}
+                              onClick={() => { setSelectedReservation(res); setShowReservationModal(true); }}
+                            >
+                              <p className="font-semibold truncate">{res.clientName}</p>
+                              <p className="opacity-60">{res.startTime} – {res.endTime}</p>
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Footer: leyenda + métricas */}
+            <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-4 border-t border-gray-100 bg-gray-50/50">
+              <div className="flex items-center gap-4 flex-wrap">
+                <span className="flex items-center gap-1.5 text-xs font-semibold text-gray-600">
+                  <span className="w-2.5 h-2.5 rounded-full bg-green-400 inline-block" /> Confirmada
+                </span>
+                <span className="flex items-center gap-1.5 text-xs font-semibold text-gray-600">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block" /> Pendiente
+                </span>
+                <span className="flex items-center gap-1.5 text-xs font-semibold text-gray-600">
+                  <span className="w-2.5 h-2.5 rounded-full bg-gray-200 inline-block" /> Libre
+                </span>
+              </div>
+              <div className="flex items-center gap-5 flex-wrap text-xs font-semibold text-gray-600">
+                <span><span className="text-gray-900 font-bold">{gridReservations.length}</span> turnos</span>
+                <span><span className="text-gray-900 font-bold">${totalBilled.toLocaleString("es-AR")}</span> facturados</span>
+                <span><span className="text-gray-900 font-bold">{occupancyPct}%</span> ocupación</span>
+              </div>
+            </div>
+
           </div>
         )}
 
