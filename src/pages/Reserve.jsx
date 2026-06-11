@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 // useParams para leer el courtId de la URL, useNavigate para redirigir si el dueno intenta reservar su propia cancha
 import { useParams, useNavigate } from "react-router-dom";
 // getDoc para traer un documento por ID, addDoc para crear la reserva, onSnapshot para horarios en tiempo real
-import { doc, getDoc, collection, addDoc, query, where, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, addDoc, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
 import Navbar from "../components/Navbar";
@@ -61,16 +61,17 @@ function Reserve() {
   useEffect(() => {
     if (!date) return;
     const q = query(
-      collection(db, "reservations"),
+      collection(db, "slots"),
       where("courtId", "==", courtId),
-      where("date", "==", date),
-      where("status", "in", ["confirmed", "pending"])
+      where("date", "==", date)
     );
     const unsub = onSnapshot(q, (snap) => {
       const slotsData = {};
       snap.docs.forEach((d) => {
         const data = d.data();
-        slotsData[data.startTime] = data.status;
+        if (data.status === "confirmed" || data.status === "pending") {
+          slotsData[data.startTime] = data.status;
+        }
       });
       setReservedSlots(slotsData);
     });
@@ -99,13 +100,14 @@ function Reserve() {
         ownerId: court.ownerId,
         date,
         startTime,
-        // endTime es el siguiente horario del array; si es el ultimo se usa "21:00" como cierre
         endTime: HORARIOS[HORARIOS.indexOf(startTime) + 1] || "21:00",
         status: "pending",
         createdAt: new Date().toISOString(),
       });
+      await setDoc(doc(db, "slots", `${courtId}_${date}_${startTime}`), {
+        courtId, date, startTime, status: "pending",
+      });
       setSuccess(true);
-      // onSnapshot detecta el nuevo doc y actualiza los horarios automaticamente
     });
   };
 

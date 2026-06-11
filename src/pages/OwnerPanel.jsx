@@ -125,14 +125,14 @@ function OwnerPanel() {
     return () => unsub();
   }, [selectedCourt]);
 
-  // Confirma una reserva en Firestore — onSnapshot actualiza el calendario y el panel automaticamente
-  const handleConfirm = (id) => runConfirm(async () => {
-    await updateDoc(doc(db, "reservations", id), { status: "confirmed" });
+  const handleConfirm = (res) => runConfirm(async () => {
+    await updateDoc(doc(db, "reservations", res.id), { status: "confirmed" });
+    await updateDoc(doc(db, "slots", `${res.courtId}_${res.date}_${res.startTime}`), { status: "confirmed" });
   });
 
-  // Rechaza una reserva en Firestore — onSnapshot la elimina del calendario y del panel automaticamente
-  const handleReject = (id) => runReject(async () => {
-    await updateDoc(doc(db, "reservations", id), { status: "cancelled" });
+  const handleReject = (res) => runReject(async () => {
+    await updateDoc(doc(db, "reservations", res.id), { status: "cancelled" });
+    await updateDoc(doc(db, "slots", `${res.courtId}_${res.date}_${res.startTime}`), { status: "cancelled" });
   });
 
   // Agrega una nueva cancha en Firestore — onSnapshot actualiza el grid de canchas automaticamente
@@ -586,14 +586,14 @@ function OwnerPanel() {
                   {selectedReservation.status === "pending" && (
                     <div className="flex gap-2 mt-4">
                       <button
-                        onClick={() => { handleConfirm(selectedReservation.id); setShowReservationModal(false); }}
+                        onClick={() => { handleConfirm(selectedReservation); setShowReservationModal(false); }}
                         disabled={confirmingRes || rejectingRes}
                         className="flex-1 bg-green-500 hover:bg-green-600 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-semibold py-2 rounded-xl transition-colors"
                       >
                         {confirmingRes ? "Confirmando..." : "✅ Confirmar pago"}
                       </button>
                       <button
-                        onClick={() => { handleReject(selectedReservation.id); setShowReservationModal(false); }}
+                        onClick={() => { handleReject(selectedReservation); setShowReservationModal(false); }}
                         disabled={rejectingRes || confirmingRes}
                         className="flex-1 bg-red-50 hover:bg-red-100 disabled:opacity-60 disabled:cursor-not-allowed text-red-500 text-sm font-semibold py-2 rounded-xl transition-colors"
                       >

@@ -1,5 +1,6 @@
 // useEffect para montar el listener de tiempo real, useState para manejar reservas, canchas y carga
 import { useEffect, useState } from "react";
+import { useAsyncAction } from "../hooks/useAsyncAction";
 // onSnapshot reemplaza a getDocs para las reservas del cliente — getDocs se mantiene solo para canchas (dato secundario)
 import { collection, query, where, getDocs, doc, updateDoc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -10,6 +11,7 @@ import Navbar from "../components/Navbar";
 function MyReservations() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { run: runCancel, loading: cancelling } = useAsyncAction();
   // lista de reservas del cliente ordenadas por fecha de creacion descendente
   const [reservations, setReservations] = useState([]);
   // mapa { courtId -> datos de la cancha } para acceso rapido sin re-consultar Firestore por cada reserva
@@ -49,9 +51,11 @@ function MyReservations() {
     return () => unsub();
   }, [user]);
 
-  // Cancela una reserva en Firestore — onSnapshot detecta el cambio y actualiza la lista automaticamente
-  const handleCancel = async (reservationId) => {
-    await updateDoc(doc(db, "reservations", reservationId), { status: "cancelled" });
+  const handleCancel = (res) => {
+    runCancel(async () => {
+      await updateDoc(doc(db, "reservations", res.id), { status: "cancelled" });
+      await updateDoc(doc(db, "slots", `${res.courtId}_${res.date}_${res.startTime}`), { status: "cancelled" });
+    });
   };
 
   // devuelve estilos y etiqueta segun el estado de la reserva para el badge de color
@@ -112,10 +116,11 @@ function MyReservations() {
                   {/* Boton de cancelar solo visible si la reserva todavia esta pendiente */}
                   {res.status === "pending" && (
                     <button
-                      onClick={() => handleCancel(res.id)}
-                      className="mt-4 w-full bg-red-50 hover:bg-red-100 text-red-500 text-sm font-semibold py-2 rounded-xl transition-colors"
+                      onClick={() => handleCancel(res)}
+                      disabled={cancelling}
+                      className="mt-4 w-full bg-red-50 hover:bg-red-100 text-red-500 text-sm font-semibold py-2 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Cancelar reserva
+                      {cancelling ? "Cancelando..." : "Cancelar reserva"}
                     </button>
                   )}
                 </div>
