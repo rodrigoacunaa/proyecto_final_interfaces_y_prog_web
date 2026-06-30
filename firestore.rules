@@ -2,10 +2,13 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Usuarios: cada uno solo puede leer/editar su propio doc.
+    // Usuarios: cada uno solo puede leer/editar SU PROPIO doc.
+    // La lectura esta acotada al propio uid: antes estaba abierta a cualquier
+    // autenticado y filtraba email/whatsapp/nombre/rol de todos. El whatsapp del
+    // owner que necesita Reserve.jsx ahora vive en /ownerContacts (sin datos sensibles).
     // El campo "role" nunca puede ser modificado por el propio usuario.
 		match /users/{userId} {
-      allow read: if request.auth != null; 
+      allow read: if request.auth != null && request.auth.uid == userId;
       allow create: if request.auth != null && request.auth.uid == userId;
       allow update: if request.auth != null
                     && request.auth.uid == userId
@@ -13,40 +16,86 @@ service cloud.firestore {
                         .affectedKeys().hasAny(['role']);
     }
 
+    // Contacto publico del owner: SOLO el numero de WhatsApp, sin datos sensibles.
+    // Cualquier autenticado puede leerlo (Reserve.jsx lo usa para armar el chat),
+    // pero solo el propio owner puede escribir el suyo.
+    match /ownerContacts/{ownerId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                   && request.auth.uid == ownerId
+                   && request.resource.data.keys().hasOnly(['whatsapp'])
+                   && request.resource.data.whatsapp is string;
+    }
+
     // Canchas: cualquier usuario autenticado puede leer.
-    // Solo owners/superadmins pueden crear, y solo la suya propia.
-    // Solo el dueño puede editar o eliminar su cancha.
+    // Solo owners/superadmins pueden crear, y solo la suya propia, con esquema validado.
+    // Solo el dueño puede editar (sin cambiar el ownerId) o eliminar su cancha.
     match /courts/{courtId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null
                     && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
                        in ['owner', 'superadmin']
-                    && request.resource.data.ownerId == request.auth.uid;
+                    && request.resource.data.ownerId == request.auth.uid
+                    && request.resource.data.name is string
+                    && request.resource.data.name.size() > 0
+                    && request.resource.data.name.size() <= 80
+                    && request.resource.data.price is number
+                    && request.resource.data.price >= 0
+                    && request.resource.data.location is string
+                    && request.resource.data.location.size() <= 120;
       allow update: if request.auth != null
-                    && resource.data.ownerId == request.auth.uid;
+                    && resource.data.ownerId == request.auth.uid
+                    && request.resource.data.ownerId == request.auth.uid;
       allow delete: if request.auth != null
                     && resource.data.ownerId == request.auth.uid;
     }
 
-    // Reservas: cualquier usuario autenticado puede leer (necesario para
-    // mostrar disponibilidad de horarios en Reserve.jsx).
-    // Solo el cliente puede crear una reserva con su propio uid,
-    // y no puede reservar su propia cancha.
-    // El owner puede confirmar/cancelar. El cliente solo puede cancelar
-    // sus propias reservas pendientes, sin tocar otros campos.
-    match /reservations/{resId} {
+    // Slots: mapa de disponibilidad sin datos personales. ID determinista
+    // courtId_date_startTime. El "create" solo-si-no-existe es el candado server-side
+    // anti doble-reserva: la 2da escritura concurrente del mismo turno libre falla.
+    // Un turno cancelado puede volver a reclamarse (cancelled -> pending).
+    match /slots/{slotId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null
-                    && request.resource.data.clientId == request.auth.uid
-                    && request.resource.data.clientId != request.resource.data.ownerId;
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.keys().hasOnly(['courtId', 'date', 'startTime', 'status']);
       allow update: if request.auth != null
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
                     && (
-                      resource.data.ownerId == request.auth.uid
+                      request.resource.data.status in ['confirmed', 'cancelled']
+                      || (resource.data.status == 'cancelled'
+                          && request.resource.data.status == 'pending')
+                    );
+    }
+
+    // Reservas: lectura SOLO para el cliente dueño de la reserva o el owner de la cancha
+    // (antes estaba abierta a cualquier autenticado -> fuga de nombres/patrones de clientes).
+    // El create valida esquema y fuerza status 'pending' (nadie se autoconfirma).
+    // El owner solo puede cambiar el status; el cliente solo cancela su propia reserva pendiente.
+    match /reservations/{resId} {
+      allow read: if request.auth != null
+                  && (resource.data.clientId == request.auth.uid
+                      || resource.data.ownerId == request.auth.uid);
+      allow create: if request.auth != null
+                    && request.resource.data.clientId == request.auth.uid
+                    && request.resource.data.clientId != request.resource.data.ownerId
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.clientName is string
+                    && request.resource.data.clientName.size() <= 100
+                    && request.resource.data.date is string
+                    && request.resource.data.keys().hasOnly(
+                         ['courtId', 'clientId', 'clientName', 'ownerId',
+                          'date', 'startTime', 'endTime', 'status', 'createdAt']);
+      allow update: if request.auth != null
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+                    && (
+                      // Owner: confirma o cancela una reserva de su cancha
+                      (resource.data.ownerId == request.auth.uid
+                       && request.resource.data.status in ['confirmed', 'cancelled'])
+                      // Cliente: solo cancela su propia reserva mientras esta pendiente
                       || (resource.data.clientId == request.auth.uid
                           && resource.data.status == 'pending'
-                          && request.resource.data.status == 'cancelled'
-                          && request.resource.data.diff(resource.data)
-                              .affectedKeys().hasOnly(['status']))
+                          && request.resource.data.status == 'cancelled')
                     );
     }
 

@@ -108,22 +108,27 @@ function OwnerPanel() {
   // (lo que ocurre al cerrar el modal). El filtro de fecha se hace client-side en getReservation()
   // para evitar indices compuestos en Firestore (combinar "in" con ">=" requeriria uno).
   useEffect(() => {
-    if (!selectedCourt) return;
+    if (!selectedCourt || !user) return;
 
+    // Filtramos por ownerId (ademas de courtId) porque la regla de lectura de "reservations"
+    // exige que la query garantice que el solicitante es el owner. Las dos igualdades se
+    // sirven con indices de campo unico, sin requerir un indice compuesto.
     const q = query(
       collection(db, "reservations"),
-      where("courtId", "==", selectedCourt.id),
-      where("status", "in", ["confirmed", "pending"])
+      where("ownerId", "==", user.uid),
+      where("courtId", "==", selectedCourt.id)
     );
 
     const unsub = onSnapshot(q, (snap) => {
       const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      // filtramos desde hoy en adelante client-side para mostrar solo reservas futuras o del dia
-      setCourtReservations(all.filter((r) => r.date >= today));
+      // estado activo + desde hoy en adelante se filtran client-side para evitar indices compuestos
+      setCourtReservations(
+        all.filter((r) => ["confirmed", "pending"].includes(r.status) && r.date >= today)
+      );
     });
 
     return () => unsub();
-  }, [selectedCourt]);
+  }, [selectedCourt, user]);
 
   const handleConfirm = (res) => runConfirm(async () => {
     await updateDoc(doc(db, "reservations", res.id), { status: "confirmed" });

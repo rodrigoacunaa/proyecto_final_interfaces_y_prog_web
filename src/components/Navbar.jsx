@@ -3,7 +3,7 @@ import { signOut } from "firebase/auth";
 import { auth, db } from "../firebase/config";
 // onSnapshot reemplaza a getDocs para mantener las notificaciones en tiempo real
 // getDocs se sigue usando solo para resolver nombres de canchas (dato estatico secundario)
-import { doc, updateDoc, collection, getDocs, query, where, onSnapshot } from "firebase/firestore";
+import { doc, updateDoc, setDoc, collection, getDocs, query, where, onSnapshot } from "firebase/firestore";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 
@@ -108,14 +108,18 @@ function Navbar({ backTo, backLabel }) {
     return () => unsub();
   }, [user, userRole]);
 
-  // Confirma una reserva desde la campana — onSnapshot actualiza el badge automaticamente
-  const handleNotifConfirm = async (id) => {
-    await updateDoc(doc(db, "reservations", id), { status: "confirmed" });
+  // Confirma una reserva desde la campana — onSnapshot actualiza el badge automaticamente.
+  // Sincronizamos tambien el slot para que la grilla de disponibilidad refleje el estado real.
+  const handleNotifConfirm = async (notif) => {
+    await updateDoc(doc(db, "reservations", notif.id), { status: "confirmed" });
+    await updateDoc(doc(db, "slots", `${notif.courtId}_${notif.date}_${notif.startTime}`), { status: "confirmed" });
   };
 
-  // Rechaza una reserva desde la campana — onSnapshot elimina la notificacion automaticamente
-  const handleNotifReject = async (id) => {
-    await updateDoc(doc(db, "reservations", id), { status: "cancelled" });
+  // Rechaza una reserva desde la campana — onSnapshot elimina la notificacion automaticamente.
+  // Marcamos el slot como cancelado para liberar el turno (vuelve a ser reservable).
+  const handleNotifReject = async (notif) => {
+    await updateDoc(doc(db, "reservations", notif.id), { status: "cancelled" });
+    await updateDoc(doc(db, "slots", `${notif.courtId}_${notif.date}_${notif.startTime}`), { status: "cancelled" });
   };
 
   // cierra la sesion del usuario en Firebase y redirige al login
@@ -137,6 +141,9 @@ function Navbar({ backTo, backLabel }) {
     try {
       const userRef = doc(db, "users", user.uid);
       await updateDoc(userRef, { whatsapp: clean });
+      // Espejamos el numero en /ownerContacts (dato publico acotado) para que Reserve.jsx
+      // lo lea sin necesidad de leer el doc /users del owner (que ahora es privado).
+      await setDoc(doc(db, "ownerContacts", user.uid), { whatsapp: clean });
       // propagamos el cambio al contexto global para que Reserve.jsx lo lea sin un re-fetch
       setUser({ ...user, whatsapp: clean });
       setEditingWsp(false);
@@ -251,13 +258,13 @@ function Navbar({ backTo, backLabel }) {
                           </p>
                           <div className="flex gap-2 mt-2">
                             <button
-                              onClick={() => handleNotifConfirm(notif.id)}
+                              onClick={() => handleNotifConfirm(notif)}
                               className="flex-1 bg-green-500 hover:bg-green-600 text-white text-xs font-bold py-1.5 rounded-lg transition-colors"
                             >
                               ✅ Confirmar
                             </button>
                             <button
-                              onClick={() => handleNotifReject(notif.id)}
+                              onClick={() => handleNotifReject(notif)}
                               className="flex-1 bg-red-50 hover:bg-red-100 text-red-500 text-xs font-bold py-1.5 rounded-lg transition-colors"
                             >
                               ❌ Rechazar

@@ -2,8 +2,9 @@
 import { useEffect, useState } from "react";
 // useParams para leer el courtId de la URL, useNavigate para redirigir si el dueno intenta reservar su propia cancha
 import { useParams, useNavigate } from "react-router-dom";
-// getDoc para traer un documento por ID, addDoc para crear la reserva, onSnapshot para horarios en tiempo real
-import { doc, getDoc, setDoc, collection, addDoc, query, where, onSnapshot } from "firebase/firestore";
+// getDoc para traer un documento por ID, runTransaction para crear reserva + slot de forma atomica,
+// onSnapshot para horarios en tiempo real
+import { doc, getDoc, collection, query, where, onSnapshot, runTransaction } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
 import Navbar from "../components/Navbar";
@@ -43,11 +44,13 @@ function Reserve() {
         // el dueno no puede reservar su propia cancha, lo redirigimos al home
         if (data.ownerId === user.uid) { navigate("/"); return; }
         // Pre-cargamos el whatsapp del dueno aqui por dos razones:
-        // 1. el guard ownerSnap.exists() evita un crash por null-deref
+        // 1. el guard contactSnap.exists() evita un crash por null-deref
         // 2. guardar el numero en estado permite abrir window.open de forma sincronica
         //    en handleReserve (antes de cualquier await), evitando que los bloqueadores de popups lo bloqueen
-        const ownerSnap = await getDoc(doc(db, "users", data.ownerId));
-        setOwnerWhatsapp(ownerSnap.exists() ? ownerSnap.data().whatsapp || null : null);
+        // Lo leemos de /ownerContacts (dato publico acotado) y no de /users, que solo
+        // es legible por su propio dueno para no exponer email/whatsapp de todos.
+        const contactSnap = await getDoc(doc(db, "ownerContacts", data.ownerId));
+        setOwnerWhatsapp(contactSnap.exists() ? contactSnap.data().whatsapp || null : null);
         setCourt({ id: docSnap.id, ...data });
       }
       setLoading(false);
@@ -93,19 +96,30 @@ function Reserve() {
     window.open(url, "_blank");
 
     runReserve(async () => {
-      await addDoc(collection(db, "reservations"), {
-        courtId,
-        clientId: user.uid,
-        clientName: user.displayName || user.email,
-        ownerId: court.ownerId,
-        date,
-        startTime,
-        endTime: HORARIOS[HORARIOS.indexOf(startTime) + 1] || "21:00",
-        status: "pending",
-        createdAt: new Date().toISOString(),
-      });
-      await setDoc(doc(db, "slots", `${courtId}_${date}_${startTime}`), {
-        courtId, date, startTime, status: "pending",
+      // Reserva + slot se escriben en una transaccion atomica para evitar la doble reserva:
+      // leemos el slot por su ID determinista y abortamos si el turno ya esta tomado.
+      // Si dos clientes reservan el mismo turno a la vez, la transaccion del segundo
+      // detecta el cambio, reintenta, re-lee el slot ocupado y falla con el mensaje de error.
+      const slotRef = doc(db, "slots", `${courtId}_${date}_${startTime}`);
+      await runTransaction(db, async (tx) => {
+        const slotSnap = await tx.get(slotRef);
+        // un turno solo esta libre si el slot no existe o quedo cancelado
+        if (slotSnap.exists() && slotSnap.data().status !== "cancelled") {
+          throw new Error("Ese turno ya fue reservado. Elegí otro horario.");
+        }
+        tx.set(slotRef, { courtId, date, startTime, status: "pending" });
+        const resRef = doc(collection(db, "reservations"));
+        tx.set(resRef, {
+          courtId,
+          clientId: user.uid,
+          clientName: user.displayName || user.email,
+          ownerId: court.ownerId,
+          date,
+          startTime,
+          endTime: HORARIOS[HORARIOS.indexOf(startTime) + 1] || "21:00",
+          status: "pending",
+          createdAt: new Date().toISOString(),
+        });
       });
       setSuccess(true);
     });
