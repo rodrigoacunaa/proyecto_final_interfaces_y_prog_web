@@ -254,20 +254,20 @@ function Navbar({ backTo, backLabel }) {
                         <div key={notif.id} className="px-4 py-3">
                           <p className="text-sm font-semibold text-gray-900 truncate">{notif.courtName}</p>
                           <p className="text-xs text-gray-500 mt-0.5">
-                            👤 {notif.clientName} · 📅 {notif.date} · 🕐 {notif.startTime}hs
+                            {notif.clientName} · {notif.date} · {notif.startTime}hs
                           </p>
                           <div className="flex gap-2 mt-2">
                             <button
                               onClick={() => handleNotifConfirm(notif)}
                               className="flex-1 bg-green-500 hover:bg-green-600 text-white text-xs font-bold py-1.5 rounded-lg transition-colors"
                             >
-                              ✅ Confirmar
+                              Confirmar
                             </button>
                             <button
                               onClick={() => handleNotifReject(notif)}
                               className="flex-1 bg-red-50 hover:bg-red-100 text-red-500 text-xs font-bold py-1.5 rounded-lg transition-colors"
                             >
-                              ❌ Rechazar
+                              Rechazar
                             </button>
                           </div>
                         </div>

@@ -256,7 +256,7 @@ function OwnerPanel() {
               onClick={() => { setShowEditModal(true); setCourtToEdit(null); setEditErrors({}); }}
               className="bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
             >
-              ✏️ Editar cancha
+              Editar cancha
             </button>
             {courts.length >= 6 ? (
               <span className="text-xs text-gray-400 bg-gray-100 px-4 py-2 rounded-xl">

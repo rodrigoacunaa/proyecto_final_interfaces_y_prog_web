@@ -87,7 +87,7 @@ function MyReservations() {
         {/* Estado vacio: el usuario aun no tiene reservas */}
         {reservations.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-12 text-center">
-            <span className="text-5xl">📋</span>
+            {/*<span className="text-5xl">📋</span>*/}
             <p className="text-gray-400 mt-4">Todavía no hiciste ninguna reserva.</p>
             <button onClick={() => navigate("/")} className="mt-4 bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-6 py-2 rounded-xl transition-colors">
               Ver canchas
@@ -104,9 +104,9 @@ function MyReservations() {
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <h3 className="font-bold text-gray-900">{court ? court.name : "Cancha"}</h3>
-                      <p className="text-gray-500 text-sm mt-1">📍 {court ? court.location : ""}</p>
-                      <p className="text-gray-500 text-sm">📅 {res.date} a las {res.startTime}hs</p>
-                      <p className="text-gray-500 text-sm">💰 ${court ? court.price : ""}/hora</p>
+                      <p className="text-gray-500 text-sm mt-1">{court ? court.location : ""}</p>
+                      <p className="text-gray-500 text-sm">{res.date} a las {res.startTime}hs</p>
+                      <p className="text-gray-500 text-sm">${court ? court.price : ""}/hora</p>
                     </div>
                     {/* Badge de estado con color dinamico segun statusConfig */}
                     <span className={`text-xs font-semibold ${status.bg} ${status.text} px-3 py-1 rounded-full whitespace-nowrap ml-3`}>

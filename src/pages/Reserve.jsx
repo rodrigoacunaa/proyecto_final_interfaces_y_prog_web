@@ -179,7 +179,7 @@ function Reserve() {
         {/* Aviso si el dueno todavia no configuro su WhatsApp — bloquea la reserva hasta que lo haga */}
         {!ownerWhatsapp && !loading && (
           <div className="bg-amber-50 border border-amber-200 text-amber-700 rounded-2xl px-5 py-4 mb-6 text-sm">
-            ⚠️ El dueño aún no configuró su WhatsApp de contacto. No podés reservar hasta que lo haga.
+            El dueño aún no configuró su WhatsApp de contacto. No podés reservar hasta que lo haga.
           </div>
         )}
 
