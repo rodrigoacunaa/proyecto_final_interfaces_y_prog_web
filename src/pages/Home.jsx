@@ -6,8 +6,8 @@ import { useAuth } from "../context/AuthContext";
 import Navbar from "../components/Navbar";
 
 function Home() {
-  const [courts, setCourts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [courts, setCourts] = useState([]); // Guardamos la lista de canchas, arrancamos en vacio
+  const [loading, setLoading] = useState(true); //empieza en true avisando que esta cargando para mostrar el incono de caarga mientrass se traen los datos 
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -23,6 +23,7 @@ function Home() {
 
       //revisamos cambios en firebase
       try{
+        //aca se hace la consulta a firebase para traer las canchas disponibles
         const q = query(collection(db, "courts"), where("available","==", true));
         const snapshot = await getDocs(q);
         const data = snapshot.docs.map((doc)=>({id: doc.id, ...doc.data()}));
@@ -30,7 +31,7 @@ function Home() {
         //comparamos si existen cambios antes de forzar el renderizado
         if(JSON.stringify(data)!== cachedCourts){
           setCourts(data);
-          // actualizamos nuestra caché para la proxima vez
+          // actualizamos nuestra cache para la proxima vez
           sessionStorage.setItem("courtsCache", JSON.stringify(data));
         }
       } catch (error){
@@ -89,7 +90,7 @@ function Home() {
                   <p className="text-gray-500 text-sm mt-1">📍 {court.location}</p>
                   <div className="flex items-center justify-between mt-4">
                     <span className="font-bold text-gray-900">${court.price}<span className="text-gray-400 font-normal text-sm">/hora</span></span>
-                    {court.ownerId !== user.uid && (
+                    {court.ownerId !== user.uid && ( // validacion de seguridad para que el dueño de la cancha no pueda reservar su propia cancha
                       <button
                         onClick={() => navigate(`/reserve/${court.id}`)}
                         className="bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors"

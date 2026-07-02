@@ -1,9 +1,5 @@
-// useEffect para cargar la cancha al montar y el listener de horarios, useState para fecha y estado del flujo
 import { useEffect, useState } from "react";
-// useParams para leer el courtId de la URL, useNavigate para redirigir si el dueno intenta reservar su propia cancha
 import { useParams, useNavigate } from "react-router-dom";
-// getDoc para traer un documento por ID, runTransaction para crear reserva + slot de forma atomica,
-// onSnapshot para horarios en tiempo real
 import { doc, getDoc, collection, query, where, onSnapshot, runTransaction } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
@@ -11,7 +7,6 @@ import Navbar from "../components/Navbar";
 // Hook para proteger el submit de la reserva contra doble-click, expone tambien loading y error
 import { useAsyncAction } from "../hooks/useAsyncAction";
 
-// Franja horaria disponible para reservas, de 9 a 20hs con bloques de 1 hora
 const HORARIOS = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00"];
 
 function Reserve() {
@@ -27,12 +22,11 @@ function Reserve() {
   const [court, setCourt] = useState(null);
   // fecha seleccionada por el usuario en formato YYYY-MM-DD
   const [date, setDate] = useState("");
-  // mapa { hora -> status } de los horarios ocupados para la fecha seleccionada
   const [reservedSlots, setReservedSlots] = useState({});
   // numero de whatsapp del dueno, pre-cargado al montar para poder abrir el chat de forma sincronica
   const [ownerWhatsapp, setOwnerWhatsapp] = useState(null);
   const [loading, setLoading] = useState(true);
-  // flag que muestra el mensaje de exito tras crear la reserva correctamente
+  // reserva creada correctamente
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
@@ -43,12 +37,6 @@ function Reserve() {
         const data = docSnap.data();
         // el dueno no puede reservar su propia cancha, lo redirigimos al home
         if (data.ownerId === user.uid) { navigate("/"); return; }
-        // Pre-cargamos el whatsapp del dueno aqui por dos razones:
-        // 1. el guard contactSnap.exists() evita un crash por null-deref
-        // 2. guardar el numero en estado permite abrir window.open de forma sincronica
-        //    en handleReserve (antes de cualquier await), evitando que los bloqueadores de popups lo bloqueen
-        // Lo leemos de /ownerContacts (dato publico acotado) y no de /users, que solo
-        // es legible por su propio dueno para no exponer email/whatsapp de todos.
         const contactSnap = await getDoc(doc(db, "ownerContacts", data.ownerId));
         setOwnerWhatsapp(contactSnap.exists() ? contactSnap.data().whatsapp || null : null);
         setCourt({ id: docSnap.id, ...data });
@@ -91,15 +79,9 @@ function Reserve() {
     // Armamos el mensaje pre-completado para el dueno con los datos de la reserva
     const mensaje = `Hola! Quiero reservar *${court.name}* para el *${date}* a las *${startTime}hs*. Mi nombre es ${user.displayName || user.email}. Quedo esperando el alias para confirmar el pago. ¡Gracias!`;
     const url = `https://api.whatsapp.com/send?phone=${ownerWhatsapp}&text=${encodeURIComponent(mensaje)}`;
-    // window.open debe llamarse ANTES de cualquier await para mantenerse en el contexto
-    // de gesto del usuario — si se llama despues de un await los bloqueadores de popups lo cancelan
     window.open(url, "_blank");
 
     runReserve(async () => {
-      // Reserva + slot se escriben en una transaccion atomica para evitar la doble reserva:
-      // leemos el slot por su ID determinista y abortamos si el turno ya esta tomado.
-      // Si dos clientes reservan el mismo turno a la vez, la transaccion del segundo
-      // detecta el cambio, reintenta, re-lee el slot ocupado y falla con el mensaje de error.
       const slotRef = doc(db, "slots", `${courtId}_${date}_${startTime}`);
       await runTransaction(db, async (tx) => {
         const slotSnap = await tx.get(slotRef);
@@ -125,9 +107,7 @@ function Reserve() {
     });
   };
 
-  // Pantalla de carga mientras se obtienen los datos de la cancha desde Firestore
   if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">Cargando...</div>;
-  // Si el courtId no existe en Firestore mostramos error en lugar de romper el render
   if (!court) return <div className="min-h-screen flex items-center justify-center text-gray-400">Cancha no encontrada.</div>;
 
   return (
@@ -162,7 +142,7 @@ function Reserve() {
           />
         </div>
 
-        {/* Mensaje de exito tras crear la reserva — le indica al usuario que espere confirmacion por WhatsApp */}
+        {/* Mensaje de exito tras crear la reserva*/}
         {success && (
           <div className="bg-green-50 border border-green-200 text-green-700 rounded-2xl px-5 py-4 mb-6 text-sm">
             ✅ <strong>¡Solicitud enviada!</strong> El dueño te va a confirmar por WhatsApp una vez que reciba el pago.

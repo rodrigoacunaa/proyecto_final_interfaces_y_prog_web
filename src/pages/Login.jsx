@@ -1,4 +1,3 @@
-// useState para manejar el estado del formulario (modo activo, campos, errores, loading)
 import { useState } from "react";
 // Funciones de Firebase Auth necesarias para los tres flujos: login, registro y recuperacion de contrasena
 import {
@@ -16,7 +15,6 @@ import { useNavigate } from "react-router-dom";
 const provider = new GoogleAuthProvider();
 
 // Mapea los codigos de error de Firebase a mensajes entendibles para el usuario
-// Se centraliza aqui para no repetir la logica en cada handler y mantener los mensajes consistentes
 const errorMessage = (code) => {
   switch (code) {
     case "auth/user-not-found":
@@ -89,8 +87,6 @@ function Login() {
   };
 
   // Crea una cuenta nueva con email/contrasena y guarda el nombre como displayName en Firebase Auth.
-  // updateProfile se llama inmediatamente despues de crear el usuario porque AuthContext lo lee
-  // en el primer onAuthStateChanged para crear el documento en Firestore con el nombre correcto.
   const handleRegister = async (e) => {
     e.preventDefault();
     setError("");
@@ -109,8 +105,6 @@ function Login() {
   };
 
   // Envia un email de recuperacion de contrasena al email ingresado.
-  // Si el envio es exitoso, muestra el mensaje de confirmacion en `info` y oculta el formulario
-  // (la condicion `!info` en el JSX se encarga de eso).
   const handleForgot = async (e) => {
     e.preventDefault();
     setError("");

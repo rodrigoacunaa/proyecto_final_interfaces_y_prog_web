@@ -1,7 +1,7 @@
 // useEffect para montar el listener de tiempo real, useState para manejar reservas, canchas y carga
 import { useEffect, useState } from "react";
 import { useAsyncAction } from "../hooks/useAsyncAction";
-// onSnapshot reemplaza a getDocs para las reservas del cliente — getDocs se mantiene solo para canchas (dato secundario)
+// onSnapshot reemplaza a getDocs para las reservas del cliente, getDocs se mantiene solo para canchas 
 import { collection, query, where, getDocs, doc, updateDoc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
@@ -18,11 +18,7 @@ function MyReservations() {
   const [courts, setCourts] = useState({});
   const [loading, setLoading] = useState(true);
 
-  // Listener en tiempo real de las reservas del cliente.
-  // Cada vez que una reserva cambia de estado (ej: el owner la confirma), onSnapshot
-  // dispara el callback y la UI se actualiza automaticamente sin necesidad de refetch manual.
-  // Los datos de canchas se resuelven con getDocs dentro del callback porque son estaticos
-  // y no justifican un listener permanente adicional.
+  // Listener en tiempo real de las reservas del cliente, se dispara cada vez que hay un cambio en Firestore cracionm, elimiancion etc
   useEffect(() => {
     if (!user) return;
 
