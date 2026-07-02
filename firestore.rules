@@ -2,11 +2,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Usuarios: cada uno solo puede leer/editar SU PROPIO doc.
-    // La lectura esta acotada al propio uid: antes estaba abierta a cualquier
-    // autenticado y filtraba email/whatsapp/nombre/rol de todos. El whatsapp del
-    // owner que necesita Reserve.jsx ahora vive en /ownerContacts (sin datos sensibles).
-    // El campo "role" nunca puede ser modificado por el propio usuario.
+    // Usuarios
 		match /users/{userId} {
       allow read: if request.auth != null && request.auth.uid == userId;
       allow create: if request.auth != null && request.auth.uid == userId;
@@ -16,9 +12,7 @@ service cloud.firestore {
                         .affectedKeys().hasAny(['role']);
     }
 
-    // Contacto publico del owner: SOLO el numero de WhatsApp, sin datos sensibles.
-    // Cualquier autenticado puede leerlo (Reserve.jsx lo usa para armar el chat),
-    // pero solo el propio owner puede escribir el suyo.
+    // Contacto publico del owner
     match /ownerContacts/{ownerId} {
       allow read: if request.auth != null;
       allow write: if request.auth != null
@@ -27,9 +21,7 @@ service cloud.firestore {
                    && request.resource.data.whatsapp is string;
     }
 
-    // Canchas: cualquier usuario autenticado puede leer.
-    // Solo owners/superadmins pueden crear, y solo la suya propia, con esquema validado.
-    // Solo el dueño puede editar (sin cambiar el ownerId) o eliminar su cancha.
+    // Canchas
     match /courts/{courtId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null
@@ -50,10 +42,7 @@ service cloud.firestore {
                     && resource.data.ownerId == request.auth.uid;
     }
 
-    // Slots: mapa de disponibilidad sin datos personales. ID determinista
-    // courtId_date_startTime. El "create" solo-si-no-existe es el candado server-side
-    // anti doble-reserva: la 2da escritura concurrente del mismo turno libre falla.
-    // Un turno cancelado puede volver a reclamarse (cancelled -> pending).
+    // Slots
     match /slots/{slotId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null
@@ -68,10 +57,7 @@ service cloud.firestore {
                     );
     }
 
-    // Reservas: lectura SOLO para el cliente dueño de la reserva o el owner de la cancha
-    // (antes estaba abierta a cualquier autenticado -> fuga de nombres/patrones de clientes).
-    // El create valida esquema y fuerza status 'pending' (nadie se autoconfirma).
-    // El owner solo puede cambiar el status; el cliente solo cancela su propia reserva pendiente.
+    // Reservas
     match /reservations/{resId} {
       allow read: if request.auth != null
                   && (resource.data.clientId == request.auth.uid
